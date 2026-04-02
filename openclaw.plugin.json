@@ -1,0 +1,7 @@
+{
+  "id": "relay-channel",
+  "kind": "channel",
+  "entry": "./dist/index.js",
+  "setupEntry": "./dist/setup-entry.js",
+  "description": "Relay-backed OpenClaw channel plugin."
+}
