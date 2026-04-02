@@ -1,9 +1,6 @@
-import { parseRelayChannelPluginConfig } from "./src/config.js";
-import { inspectRelaySetup } from "./src/setup.js";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
+import { relayChannelOpenclawPlugin } from "./src/openclaw-channel-plugin.js";
 
-export const relayChannelSetupEntry = {
-  parse: parseRelayChannelPluginConfig,
-  inspect: inspectRelaySetup,
-};
+export default defineSetupPluginEntry(relayChannelOpenclawPlugin);
 
-export default relayChannelSetupEntry;
+export { relayChannelOpenclawPlugin as relayChannelSetupEntry };

@@ -3,15 +3,30 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "setupEntry": "./dist/setup-entry.js",
+    "channel": {
+      "id": "relay-channel",
+      "label": "Relay Channel",
+      "blurb": "Relay-backed OpenClaw channel plugin."
+    }
+  },
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "bundle:agent": "node ./scripts/build-agent-bundle.mjs",
+    "deploy:agent": "node ./scripts/deploy-agent-bundle.mjs",
+    "smoke:agent": "node ./scripts/smoke-cycle-via-admin.mjs",
     "lint": "eslint .",
     "test": "vitest run"
   },
   "dependencies": {
+    "openclaw": "^2026.3.24",
     "ws": "^8.18.3",
     "zod": "^4.3.6"
   },

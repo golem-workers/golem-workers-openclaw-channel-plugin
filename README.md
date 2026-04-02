@@ -57,6 +57,8 @@ npm install
 npm run build
 npm run lint
 npm run test
+npm run bundle:agent
+npm run deploy:agent -- --host <host> --identity-file <key.pem>
 ```
 
 ## Docs
@@ -70,3 +72,97 @@ npm run test
 - directory lookup is local grammar-only; no live relay directory API is used yet
 - the package defines a local channel-plugin contract shim because the actual
   OpenClaw SDK package is not part of this repository
+
+## Deploy To Agent
+
+The repo includes SSH-based helper scripts for live-agent testing from a local
+build.
+
+### Build a self-contained bundle
+
+This creates a `.tgz` archive with `dist/`, `openclaw.plugin.json`,
+`package.json`, and production `node_modules`.
+
+```bash
+npm run bundle:agent
+```
+
+Default output path:
+
+```text
+.artifacts/relay-channel/relay-channel-bundle.tgz
+```
+
+### Upload and install on a remote agent
+
+The deploy script:
+
+- builds a bundle when `--bundle` is not provided
+- uploads it over `scp`
+- installs it into `~/.openclaw/workspace/plugins/relay-channel`
+- patches `~/.openclaw/openclaw.json`
+- adds the install path to `plugins.load.paths`
+- adds `relay-channel` to `plugins.allow`
+- removes `relay-channel` from `plugins.deny`
+- optionally injects `channels.relay-channel` from a local JSON file
+- restarts `openclaw-gateway.service`
+- prints a post-install summary
+
+Example:
+
+```bash
+npm run deploy:agent -- \
+  --host <ssh-host> \
+  --port <ssh-port> \
+  --identity-file /tmp/agent-key.pem
+```
+
+With channel config:
+
+```bash
+npm run deploy:agent -- \
+  --host <ssh-host> \
+  --port <ssh-port> \
+  --identity-file /tmp/agent-key.pem \
+  --channel-config-file ./examples/relay-channel.config.json
+```
+
+To skip the restart step:
+
+```bash
+npm run deploy:agent -- \
+  --host <ssh-host> \
+  --identity-file /tmp/agent-key.pem \
+  --no-restart
+```
+
+For backend-side diagnostics after install, use:
+
+```bash
+cd ../golem-workers-backend
+npm run admin:check-relay-runtime -- --server-id <server-id> --expect-plugin-id relay-channel
+```
+
+### Full smoke cycle
+
+This creates a temporary agent through backend admin API, waits until the agent
+is ready, downloads the SSH access key, deploys the local plugin bundle over
+SSH, verifies that `relay-channel` is present in OpenClaw plugin wiring, and
+then deletes the server in `finally`.
+
+By default it installs the plugin without injecting `channels.relay-channel`.
+That is intentional for the first live smoke, because channel activation should
+only be attempted after the plugin is proven loadable by the real OpenClaw
+runtime.
+
+```bash
+npm run smoke:agent -- --base-url https://dev-api.golemworkers.com
+```
+
+To also inject channel config explicitly:
+
+```bash
+npm run smoke:agent -- \
+  --base-url https://dev-api.golemworkers.com \
+  --channel-config-file ./examples/relay-channel.config.json
+```

@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "url": "ws://127.0.0.1:43129",
+  "reconnectBackoffMs": 500,
+  "maxReconnectBackoffMs": 30000,
+  "requestTimeoutMs": 10000,
+  "capabilityRequirements": {
+    "core": [
+      "messageSend",
+      "inboundMessages",
+      "replyTo",
+      "threadRouting"
+    ],
+    "optional": []
+  },
+  "dmSecurityPolicy": {
+    "mode": "allow_all",
+    "allowedTargets": []
+  },
+  "pairing": {
+    "mode": "same_chat_only",
+    "approvalRequired": false
+  },
+  "directory": {
+    "enabled": true
+  },
+  "accounts": [
+    {
+      "id": "default",
+      "url": "ws://127.0.0.1:43129"
+    }
+  ]
+}

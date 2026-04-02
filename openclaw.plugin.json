@@ -1,7 +1,121 @@
 {
   "id": "relay-channel",
   "kind": "channel",
+  "channels": ["relay-channel"],
   "entry": "./dist/index.js",
   "setupEntry": "./dist/setup-entry.js",
-  "description": "Relay-backed OpenClaw channel plugin."
+  "description": "Relay-backed OpenClaw channel plugin.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "url": {
+        "type": "string",
+        "format": "uri"
+      },
+      "port": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "reconnectBackoffMs": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "maxReconnectBackoffMs": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "requestTimeoutMs": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "capabilityRequirements": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "core": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optional": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "dmSecurityPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["allow_all", "allow_list"]
+          },
+          "allowedTargets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "pairing": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["same_chat_only", "disabled"]
+          },
+          "approvalRequired": {
+            "type": "boolean"
+          }
+        }
+      },
+      "directory": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "accounts": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      }
+    },
+    "required": ["accounts"]
+  }
 }
