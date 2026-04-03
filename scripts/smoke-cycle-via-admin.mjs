@@ -25,6 +25,7 @@ function usage() {
     "  --image <id>                 Snapshot/image id",
     "  --name <name>                Temporary server name",
     "  --channel-config-file <path> Local relay-channel config JSON",
+    "  --mock-relay                Start a mock relay websocket on 127.0.0.1:43129",
     "  --identity-file <path>       Reuse a local SSH key file instead of temp file",
     "  --task-timeout-ms <ms>       Create/wait timeout",
     "  --poll-ms <ms>               Poll interval",
@@ -167,6 +168,305 @@ async function requestJson({ method, url, token, expectedStatus, body }) {
   return parsed;
 }
 
+function buildMockRelaySource({
+  pluginInstallDir = "/root/.openclaw/workspace/plugins/relay-channel",
+  port = 43129,
+}) {
+  return `import { createRequire } from "node:module";
+const require = createRequire(${JSON.stringify(`${pluginInstallDir}/package.json`)});
+const { WebSocketServer } = require("ws");
+
+const host = "127.0.0.1";
+const port = ${port};
+let actionCounter = 0;
+
+const server = new WebSocketServer({ host, port });
+console.log(JSON.stringify({ event: "mock-relay-started", host, port }));
+
+server.on("connection", (ws) => {
+  console.log(JSON.stringify({ event: "mock-relay-connection" }));
+  ws.on("message", (raw) => {
+    const text = raw.toString();
+    let frame;
+    try {
+      frame = JSON.parse(text);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "mock-relay-invalid-json", text, error: String(error) }));
+      return;
+    }
+
+    if (frame?.type === "hello") {
+      ws.send(JSON.stringify({
+        type: "hello",
+        protocolVersion: 1,
+        role: "local-relay",
+        relayInstanceId: "relay-channel-live-mock",
+        accountId: frame.accountId,
+        transport: {
+          provider: "telegram",
+          providerVersion: "mock",
+        },
+        coreCapabilities: {
+          messageSend: true,
+          inboundMessages: true,
+          replyTo: true,
+          threadRouting: true,
+        },
+        optionalCapabilities: {
+          typing: true,
+        },
+        providerCapabilities: {},
+        targetCapabilities: {
+          dm: {},
+          group: { typing: true },
+          topic: { "telegram.forumTopics": true },
+        },
+        limits: {
+          maxUploadBytes: 1024,
+          maxCaptionBytes: 256,
+          maxPollOptions: 3,
+        },
+        dataPlane: {
+          uploadBaseUrl: "http://127.0.0.1:43129/uploads",
+          downloadBaseUrl: "http://127.0.0.1:43129/downloads",
+        },
+      }));
+      ws.send(JSON.stringify({
+        type: "event",
+        eventType: "transport.account.ready",
+        payload: {
+          accountId: frame.accountId,
+          state: "healthy",
+        },
+      }));
+      console.log(JSON.stringify({ event: "mock-relay-hello", accountId: frame.accountId }));
+      return;
+    }
+
+    if (frame?.requestType === "transport.action") {
+      actionCounter += 1;
+      console.log(JSON.stringify({
+        event: "mock-relay-action",
+        requestId: frame.requestId,
+        actionId: frame.action?.actionId ?? null,
+        kind: frame.action?.kind ?? null,
+        target: frame.action?.transportTarget ?? null,
+        payload: frame.action?.payload ?? null,
+      }));
+      ws.send(JSON.stringify({
+        type: "event",
+        eventType: "transport.action.accepted",
+        payload: {
+          requestId: frame.requestId,
+          actionId: frame.action.actionId,
+        },
+      }));
+      ws.send(JSON.stringify({
+        type: "event",
+        eventType: "transport.action.completed",
+        payload: {
+          requestId: frame.requestId,
+          actionId: frame.action.actionId,
+          result: {
+            transportMessageId: \`mock-message-\${actionCounter}\`,
+            conversationId: frame.action?.conversation?.transportConversationId ?? frame.action?.transportTarget?.chatId ?? "mock-conversation",
+            ...(frame.action?.thread?.threadId ? { threadId: frame.action.thread.threadId } : {}),
+          },
+        },
+      }));
+      return;
+    }
+
+    if (frame?.requestType === "transport.replay") {
+      console.log(JSON.stringify({ event: "mock-relay-replay", cursor: frame.cursor ?? null }));
+    }
+  });
+});
+
+const shutdown = () => {
+  server.close(() => process.exit(0));
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+`;
+}
+
+async function startMockRelay({
+  host,
+  sshPort,
+  identityFile,
+  mockPort = 43129,
+  pluginInstallDir = "/root/.openclaw/workspace/plugins/relay-channel",
+}) {
+  const scriptPath = `/tmp/relay-channel-live-mock-${mockPort}.mjs`;
+  const logPath = `/tmp/relay-channel-live-mock-${mockPort}.log`;
+  const encodedSource = Buffer.from(
+    buildMockRelaySource({ pluginInstallDir, port: mockPort }),
+    "utf8"
+  ).toString("base64");
+
+  runSshScript({
+    host,
+    port: sshPort,
+    identityFile,
+    script: `set -eu
+python3 - <<'PY'
+from pathlib import Path
+import base64
+Path(${JSON.stringify(scriptPath)}).write_text(base64.b64decode(${JSON.stringify(encodedSource)}).decode("utf-8"), encoding="utf-8")
+PY
+pkill -f ${JSON.stringify(scriptPath)} || true
+rm -f ${JSON.stringify(logPath)}
+nohup node ${JSON.stringify(scriptPath)} > ${JSON.stringify(logPath)} 2>&1 < /dev/null &
+echo mock-relay-started`,
+  });
+
+  const portReady = runSshScript({
+    host,
+    port: sshPort,
+    identityFile,
+    script: `python3 - <<'PY'
+import socket
+import time
+
+deadline = time.time() + 15
+while time.time() < deadline:
+    sock = socket.socket()
+    sock.settimeout(1)
+    try:
+        sock.connect(("127.0.0.1", ${mockPort}))
+        sock.close()
+        print("ready")
+        raise SystemExit(0)
+    except OSError:
+        time.sleep(0.5)
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+raise SystemExit(1)
+PY`,
+  });
+
+  if (!portReady.stdout.includes("ready")) {
+    const mockLog = runSshScript({
+      host,
+      port: sshPort,
+      identityFile,
+      script: `python3 - <<'PY'
+from pathlib import Path
+path = Path(${JSON.stringify(logPath)})
+if path.exists():
+    print(path.read_text(encoding='utf-8', errors='replace'))
+PY`,
+    });
+    throw new Error(
+      `Mock relay did not bind to 127.0.0.1:${mockPort}.\nMock log:\n${mockLog.stdout || "<empty>"}`
+    );
+  }
+
+  return { scriptPath, logPath };
+}
+
+async function runMockFunctionalProbe({ host, port, identityFile }) {
+  const systemdEnv =
+    "export XDG_RUNTIME_DIR=/run/user/0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus && ";
+  const messageText = `relay-channel mock probe ${new Date().toISOString()}`;
+
+  runSshScript({
+    host,
+    port,
+    identityFile,
+    script: `${systemdEnv}systemctl --user restart openclaw-gateway.service`,
+  });
+
+  let status = { stdout: "", stderr: "" };
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    status = runSshScript({
+      host,
+      port,
+      identityFile,
+      script: `${systemdEnv}openclaw channels status --probe`,
+    });
+    process.stdout.write(`[smoke] mock functional status attempt ${attempt}\n${status.stdout}`);
+    if (
+      status.stdout.includes("Relay Channel default:") &&
+      !status.stdout.includes("disconnected") &&
+      !status.stdout.includes("ECONNREFUSED")
+    ) {
+      break;
+    }
+  }
+
+  const resolved = runSshScript({
+    host,
+    port,
+    identityFile,
+    script: `${systemdEnv}openclaw channels resolve --channel relay-channel "telegram:group:-100"`,
+  });
+  process.stdout.write(`[smoke] mock functional resolve\n${resolved.stdout}`);
+
+  const mockLogBeforeSend = runSshScript({
+    host,
+    port,
+    identityFile,
+    script: `python3 - <<'PY'
+from pathlib import Path
+path = Path('/tmp/relay-channel-live-mock-43129.log')
+if not path.exists():
+    raise SystemExit(1)
+lines = path.read_text(encoding='utf-8', errors='replace').splitlines()[-80:]
+print("\\n".join(lines))
+PY`,
+  });
+
+  if (!resolved.stdout.includes("telegram:group:-100 -> telegram:group:-100")) {
+    throw new Error(`Mock relay resolve probe did not return the expected normalized target.\n${resolved.stdout}`);
+  }
+  if (status.stdout.includes("disconnected") || status.stdout.includes("ECONNREFUSED")) {
+    throw new Error(
+      `Relay channel never became healthy against the mock relay.\nStatus:\n${status.stdout}\nMock log:\n${mockLogBeforeSend.stdout}`
+    );
+  }
+
+  let send;
+  try {
+    send = runSshScript({
+      host,
+      port,
+      identityFile,
+      script: `${systemdEnv}openclaw message send --channel relay-channel --target "telegram:group:-100" --message ${JSON.stringify(messageText)}`,
+    });
+  } catch (error) {
+    throw new Error(
+      `Mock relay send probe failed.\nStatus:\n${status.stdout}\nMock log:\n${mockLogBeforeSend.stdout}\n${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  const mockLog = runSshScript({
+    host,
+    port,
+    identityFile,
+    script: `python3 - <<'PY'
+from pathlib import Path
+path = Path('/tmp/relay-channel-live-mock-43129.log')
+if not path.exists():
+    raise SystemExit(1)
+lines = path.read_text(encoding='utf-8', errors='replace').splitlines()[-80:]
+print("\\n".join(lines))
+PY`,
+  });
+
+  process.stdout.write(`[smoke] mock functional send\n${send.stdout}`);
+  process.stdout.write(`[smoke] mock relay log tail\n${mockLog.stdout}\n`);
+  if (!mockLog.stdout.includes('"event":"mock-relay-action"')) {
+    throw new Error(`Mock relay did not observe transport.action.\n${mockLog.stdout}`);
+  }
+}
+
 function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
@@ -176,6 +476,42 @@ function runCommand(command, args, options = {}) {
   if (result.status !== 0) {
     throw new Error(`Command failed: ${command} ${args.join(" ")}`);
   }
+}
+
+function runCapturedCommand(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"],
+    encoding: "utf8",
+    ...options,
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `Command failed: ${command} ${args.join(" ")}\nstdout:\n${result.stdout || "<empty>"}\nstderr:\n${result.stderr || "<empty>"}`
+    );
+  }
+  return {
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+function buildSshArgs({ identityFile, port }) {
+  const args = [];
+  if (identityFile) {
+    args.push("-i", identityFile);
+  }
+  args.push("-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null");
+  args.push("-p", String(port));
+  return args;
+}
+
+function runSshScript({ host, port, user = "root", identityFile, script }) {
+  return runCapturedCommand(
+    "ssh",
+    [...buildSshArgs({ identityFile, port }), `${user}@${host}`, "bash -s"],
+    { input: script }
+  );
 }
 
 async function waitForTaskTerminal({ baseUrl, token, taskId, timeoutMs, pollMs }) {
@@ -264,6 +600,7 @@ async function main() {
     ? parsePositiveNumber(parseStringFlag(argv, "--poll-ms"), "--poll-ms")
     : defaultPollIntervalMs;
   const keepServer = parseBooleanFlag(argv, "--keep-server");
+  const mockRelay = parseBooleanFlag(argv, "--mock-relay");
   const name = parseStringFlag(argv, "--name") ?? buildDefaultName();
   const region = parseStringFlag(argv, "--region") ?? env.E2E_PROVIDER_REGION;
   const serverType = parseStringFlag(argv, "--server-type") ?? env.E2E_PROVIDER_SERVER_TYPE;
@@ -352,6 +689,22 @@ async function main() {
       "--expect-plugin-id",
       "relay-channel",
     ]);
+
+    if (mockRelay) {
+      process.stdout.write("[smoke] starting mock relay on 127.0.0.1:43129\n");
+      await startMockRelay({
+        host: sshHost,
+        sshPort,
+        identityFile: tempKeyPath,
+        mockPort: 43129,
+      });
+      process.stdout.write("[smoke] running functional probe through mock relay\n");
+      await runMockFunctionalProbe({
+        host: sshHost,
+        port: sshPort,
+        identityFile: tempKeyPath,
+      });
+    }
 
     process.stdout.write(`[smoke] success for server ${createdServerId}\n`);
   } finally {

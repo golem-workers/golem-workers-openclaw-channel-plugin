@@ -11,6 +11,8 @@ focused contract tests.
 - typed control-plane and data-plane schemas with `zod`
 - plugin-owned `config`, `setup`, `status`, `security`, `pairing`, and
   `approvalCapability` surfaces
+- OpenClaw SDK channel plugin entry with target resolution, outbound send wiring,
+  and gateway runtime hooks
 - account-scoped runtime registry and WebSocket relay client
 - canonical target resolution, session routing, outbound route building, and
   durable in-memory persistence helpers
@@ -70,8 +72,9 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 - persistence is in-memory only; no durable store backend is wired yet
 - directory lookup is local grammar-only; no live relay directory API is used yet
-- the package defines a local channel-plugin contract shim because the actual
-  OpenClaw SDK package is not part of this repository
+- live agent send now reaches `relay-channel` runtime, but the relay control
+  socket expected at `127.0.0.1:43129` is not listening on the provisioned
+  agent, so outbound delivery currently fails with `ECONNREFUSED`
 
 ## Deploy To Agent
 
@@ -163,6 +166,15 @@ To also inject channel config explicitly:
 
 ```bash
 npm run smoke:agent -- \
+  --base-url https://dev-api.golemworkers.com \
+  --channel-config-file ./examples/relay-channel.config.json
+```
+
+To start a mock relay websocket on `127.0.0.1:43129` on the temporary agent and
+run an outbound functional probe against it:
+
+```bash
+npm run smoke:agent:mock -- \
   --base-url https://dev-api.golemworkers.com \
   --channel-config-file ./examples/relay-channel.config.json
 ```

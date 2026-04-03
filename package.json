@@ -22,6 +22,7 @@
     "bundle:agent": "node ./scripts/build-agent-bundle.mjs",
     "deploy:agent": "node ./scripts/deploy-agent-bundle.mjs",
     "smoke:agent": "node ./scripts/smoke-cycle-via-admin.mjs",
+    "smoke:agent:mock": "node ./scripts/smoke-cycle-via-admin.mjs --mock-relay",
     "lint": "eslint .",
     "test": "vitest run"
   },
