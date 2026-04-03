@@ -145,6 +145,15 @@ async function ensureRuntimeStarted(cfg: OpenClawConfig, accountId?: string | nu
   return runtime;
 }
 
+async function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
 function formatAccountSnapshot(cfg: OpenClawConfig, accountId?: string | null) {
   const resolvedAccountId = resolvePluginAccountId(cfg, accountId);
   const status = statusRegistry.get(resolvedAccountId);
@@ -250,8 +259,10 @@ export const relayChannelOpenclawPlugin = {
     },
   },
   gateway: {
-    async startAccount({ cfg, accountId, account }) {
-      return await ensureRuntimeStarted(cfg, accountId ?? account?.accountId ?? null);
+    async startAccount({ cfg, accountId, account, abortSignal }) {
+      const runtime = await ensureRuntimeStarted(cfg, accountId ?? account?.accountId ?? null);
+      await waitForAbort(abortSignal);
+      await runtime.stop();
     },
     async stopAccount({ cfg, accountId, account }) {
       const runtime = getRuntime(cfg, accountId ?? account?.accountId ?? null);
