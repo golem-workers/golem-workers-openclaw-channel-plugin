@@ -6,6 +6,7 @@ import type {
 
 export const REQUIRED_CORE_CAPABILITIES = [
   "messageSend",
+  "mediaSend",
   "inboundMessages",
   "replyTo",
   "threadRouting",

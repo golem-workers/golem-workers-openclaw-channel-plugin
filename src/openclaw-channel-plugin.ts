@@ -372,5 +372,45 @@ export const relayChannelOpenclawPlugin = {
         meta: result,
       };
     },
+    sendMedia: async ({
+      cfg,
+      to,
+      text,
+      mediaUrl,
+      accountId,
+      replyToId,
+      threadId,
+      forceDocument,
+    }) => {
+      const runtime = await ensureRuntimeStarted(cfg, accountId);
+      const resolvedTarget = resolveTarget(to);
+      if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) {
+        throw new Error("MEDIA_URL_REQUIRED: relay-channel sendMedia requires mediaUrl");
+      }
+      const result = await runtime.sendAction({
+        kind: "message.send",
+        target: {
+          ...resolvedTarget,
+          threadId:
+            threadId !== undefined && threadId !== null
+              ? String(threadId)
+              : resolvedTarget.threadId ?? null,
+        },
+        payload: {
+          ...(text ? { text } : {}),
+          mediaUrl,
+          ...(forceDocument === true ? { forceDocument: true } : {}),
+        },
+        replyToTransportMessageId: replyToId ?? null,
+        explicitThreadId:
+          threadId !== undefined && threadId !== null ? String(threadId) : null,
+      });
+      return {
+        channel: CHANNEL_ID,
+        messageId: result.transportMessageId ?? result.conversationId ?? "relay-message",
+        conversationId: result.conversationId,
+        meta: result,
+      };
+    },
   },
 } as ChannelPlugin<RelayResolvedAccount>;

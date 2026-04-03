@@ -66,6 +66,7 @@ function startMockRelay(options: MockRelayOptions = {}) {
             },
             coreCapabilities: {
               messageSend: true,
+              mediaSend: true,
               inboundMessages: true,
               replyTo: true,
               threadRouting: true,
@@ -388,6 +389,54 @@ describe("relay channel plugin", () => {
       },
       payload: {
         text: "hello",
+      },
+    });
+  });
+
+  it("emits outbound media sends through the same transport action channel", async () => {
+    const relay = startMockRelay({
+      onAction(frame, ws) {
+        ws.send(
+          JSON.stringify({
+            type: "event",
+            eventType: "transport.action.completed",
+            payload: {
+              requestId: frame.requestId,
+              actionId: frame.action.actionId,
+              result: {
+                transportMessageId: "media-1001",
+              },
+            },
+          })
+        );
+      },
+    });
+
+    const plugin = createRelayChannelPlugin({
+      config: parseRelayChannelPluginConfig({
+        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+      }),
+    });
+
+    await plugin.gateway.startAccount("default");
+    await plugin.outbound.sendMedia({
+      accountId: "default",
+      target: plugin.directory.resolveTarget("telegram:group:-100123"),
+      text: "identity",
+      mediaUrl: "workspace://proofs/identity.md",
+      fileName: "identity.md",
+      contentType: "text/markdown",
+      forceDocument: true,
+    });
+
+    expect(relay.seenActions[0]?.action).toMatchObject({
+      kind: "message.send",
+      payload: {
+        text: "identity",
+        mediaUrl: "workspace://proofs/identity.md",
+        fileName: "identity.md",
+        contentType: "text/markdown",
+        forceDocument: true,
       },
     });
   });

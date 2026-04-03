@@ -148,6 +148,24 @@ export function createRelayChannelPlugin(
           idempotencyKey: input.idempotencyKey,
         });
       },
+      async sendMedia(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "message.send",
+          target: input.target,
+          payload: {
+            ...(input.text ? { text: input.text } : {}),
+            mediaUrl: input.mediaUrl,
+            ...(input.fileName ? { fileName: input.fileName } : {}),
+            ...(input.contentType ? { contentType: input.contentType } : {}),
+            ...(input.asVoice === true ? { asVoice: true } : {}),
+            ...(input.forceDocument === true ? { forceDocument: true } : {}),
+          },
+          replyToTransportMessageId: input.replyToTransportMessageId,
+          sessionKey: input.sessionKey,
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
       async requestFileDownload(input) {
         const runtime = getRuntime(input.accountId);
         return await runtime.sendAction({

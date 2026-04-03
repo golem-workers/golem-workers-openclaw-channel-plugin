@@ -245,6 +245,19 @@ export type ChatChannelPlugin = {
       sessionKey?: string;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
+    sendMedia(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      text?: string;
+      mediaUrl: string;
+      fileName?: string;
+      contentType?: string;
+      asVoice?: boolean;
+      forceDocument?: boolean;
+      replyToTransportMessageId?: string | null;
+      sessionKey?: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
     requestFileDownload(input: {
       accountId: string;
       target: RelayResolvedTarget;

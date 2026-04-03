@@ -16,7 +16,7 @@ focused contract tests.
 - account-scoped runtime registry and WebSocket relay client
 - canonical target resolution, session routing, outbound route building, and
   durable in-memory persistence helpers
-- outbound text send and file-download request actions
+- outbound text send, media send, and file-download request actions
 - capability-gated shared message-tool action discovery
 - replay-gap, reconnect, and duplicate-terminal-event handling tests
 
@@ -72,9 +72,9 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 - persistence is in-memory only; no durable store backend is wired yet
 - directory lookup is local grammar-only; no live relay directory API is used yet
-- live agent send now reaches `relay-channel` runtime, but the relay control
-  socket expected at `127.0.0.1:43129` is not listening on the provisioned
-  agent, so outbound delivery currently fails with `ECONNREFUSED`
+- live agent send now reaches `relay-channel` runtime, including `sendMedia`
+  routing through the same `message.send` action envelope; delivery still
+  depends on the local relay control socket being reachable from the agent
 
 ## Deploy To Agent
 
