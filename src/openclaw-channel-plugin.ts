@@ -382,16 +382,9 @@ export const relayChannelOpenclawPlugin = {
         meta: result,
       };
     },
-    sendMedia: async ({
-      cfg,
-      to,
-      text,
-      mediaUrl,
-      accountId,
-      replyToId,
-      threadId,
-      forceDocument,
-    }) => {
+    sendMedia: async (input: any) => {
+      const { cfg, to, text, mediaUrl, accountId, replyToId, threadId, forceDocument } = input;
+      const asVoice = input.asVoice === true;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
       const resolvedTarget = resolveTarget(to);
       if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) {
@@ -409,6 +402,7 @@ export const relayChannelOpenclawPlugin = {
         payload: {
           ...(text ? { text } : {}),
           mediaUrl,
+          ...(asVoice === true ? { asVoice: true } : {}),
           ...(forceDocument === true ? { forceDocument: true } : {}),
         },
         replyToTransportMessageId: replyToId ?? null,
@@ -418,6 +412,22 @@ export const relayChannelOpenclawPlugin = {
       return {
         channel: CHANNEL_ID,
         messageId: result.transportMessageId ?? result.conversationId ?? "relay-message",
+        conversationId: result.conversationId,
+        meta: result,
+      };
+    },
+    requestFileDownload: async (input: any) => {
+      const { cfg, to, accountId, fileId } = input;
+      const runtime = await ensureRuntimeStarted(cfg, accountId);
+      const resolvedTarget = resolveTarget(to);
+      const result = await runtime.sendAction({
+        kind: "file.download.request",
+        target: resolvedTarget,
+        payload: { fileId },
+      });
+      return {
+        channel: CHANNEL_ID,
+        messageId: result.transportMessageId ?? result.downloadUrl ?? "relay-download",
         conversationId: result.conversationId,
         meta: result,
       };

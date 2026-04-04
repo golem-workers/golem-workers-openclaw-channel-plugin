@@ -1,10 +1,21 @@
 import type { RelayInboundMessageEvent, RelayTargetScope } from "../api.js";
 import { resolveSessionConversation } from "./session-conversation.js";
 
+export function inferRelayTargetScope(input: {
+  targetScope?: RelayTargetScope;
+  threadId?: string;
+}): RelayTargetScope {
+  if (input.targetScope) {
+    return input.targetScope;
+  }
+  return input.threadId ? "topic" : "group";
+}
+
 export function mapInboundMessageEvent(frame: {
   payload: {
     accountId: string;
     cursor?: string;
+    targetScope?: RelayTargetScope;
     conversation: {
       transportConversationId: string;
       baseConversationId?: string;
@@ -22,7 +33,10 @@ export function mapInboundMessageEvent(frame: {
     };
   };
 }): RelayInboundMessageEvent {
-  const targetScope: RelayTargetScope = frame.payload.thread?.threadId ? "topic" : "group";
+  const targetScope = inferRelayTargetScope({
+    targetScope: frame.payload.targetScope,
+    threadId: frame.payload.thread?.threadId,
+  });
   return {
     accountId: frame.payload.accountId,
     cursor: frame.payload.cursor,

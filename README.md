@@ -16,8 +16,11 @@ focused contract tests.
 - account-scoped runtime registry and WebSocket relay client
 - canonical target resolution, session routing, outbound route building, and
   durable in-memory persistence helpers
-- outbound text send, media send, and file-download request actions
+- outbound text/media send plus capability-gated edit, delete, reaction,
+  typing, poll, pin, topic, callback-answer, and file-download request actions
 - capability-gated shared message-tool action discovery
+- transport-level event decoding for inbound message edits/deletes, reactions,
+  callbacks, polls, topic updates, delivery receipts, and typing updates
 - replay-gap, reconnect, and duplicate-terminal-event handling tests
 
 ## Project structure
@@ -72,9 +75,12 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 - persistence is in-memory only; no durable store backend is wired yet
 - directory lookup is local grammar-only; no live relay directory API is used yet
-- live agent send now reaches `relay-channel` runtime, including `sendMedia`
-  routing through the same `message.send` action envelope; delivery still
-  depends on the local relay control socket being reachable from the agent
+- OpenClaw core integration still depends on the host SDK surface; the generic
+  relay plugin package already exposes richer action handlers than the current
+  OpenClaw runtime invokes directly
+- backend-originated transport events currently flow through the existing relay
+  push ingress as `transport_event`; broader Telegram update ownership can be
+  moved fully into relay later without changing the control-plane wire format
 
 ## Deploy To Agent
 

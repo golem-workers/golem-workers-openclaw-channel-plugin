@@ -164,7 +164,11 @@ export class RelayClient extends EventEmitter {
               "reactions",
               "typing",
               "polls",
+              "pinning",
               "fileDownloads",
+              "telegram.inlineButtons",
+              "telegram.forumTopics",
+              "telegram.callbackAnswer",
             ],
           },
         });
@@ -258,6 +262,17 @@ export class RelayClient extends EventEmitter {
       }
       case "transport.message.received": {
         this.emit("inboundMessage", event);
+        break;
+      }
+      case "transport.message.edited":
+      case "transport.message.deleted":
+      case "transport.reaction.updated":
+      case "transport.callback.received":
+      case "transport.poll.updated":
+      case "transport.topic.updated":
+      case "transport.delivery.receipt":
+      case "transport.typing.updated": {
+        this.emit("transportEvent", event);
         break;
       }
       case "transport.account.connecting":

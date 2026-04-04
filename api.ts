@@ -178,6 +178,20 @@ export type RelayInboundMessageEvent = {
   attachments?: Array<Record<string, JsonValue>>;
 };
 
+export type RelayTransportEvent = {
+  type: "event";
+  eventType:
+    | "transport.message.edited"
+    | "transport.message.deleted"
+    | "transport.reaction.updated"
+    | "transport.callback.received"
+    | "transport.poll.updated"
+    | "transport.topic.updated"
+    | "transport.delivery.receipt"
+    | "transport.typing.updated";
+  payload: Record<string, JsonValue>;
+};
+
 export type RelayGatewayStartResult = {
   accountId: string;
   status: RelayAccountStatus;
@@ -258,6 +272,83 @@ export type ChatChannelPlugin = {
       sessionKey?: string;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
+    editMessage(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      transportMessageId: string;
+      text?: string;
+      caption?: string;
+      parseMode?: TelegramParseModeLike;
+      replyMarkup?: Record<string, JsonValue>;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    deleteMessage(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      transportMessageId: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    setReaction(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      transportMessageId: string;
+      emojis: string[];
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    setTyping(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      enabled?: boolean;
+      chatAction?: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    sendPoll(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      question: string;
+      options: string[];
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    pinMessage(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      transportMessageId: string;
+      disableNotification?: boolean;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    unpinMessage(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      transportMessageId?: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    createTopic(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      name: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    editTopic(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      threadId: string;
+      name?: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    closeTopic(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      threadId: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    answerCallback(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      callbackQueryId: string;
+      text?: string;
+      showAlert?: boolean;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
     requestFileDownload(input: {
       accountId: string;
       target: RelayResolvedTarget;
@@ -284,3 +375,5 @@ export function createChatChannelPlugin(plugin: ChatChannelPlugin): ChatChannelP
 export function defineChannelPluginEntry(entry: ChatChannelPluginEntry): ChatChannelPluginEntry {
   return entry;
 }
+
+type TelegramParseModeLike = "HTML" | "MarkdownV2" | "Markdown";

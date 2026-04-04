@@ -5,6 +5,7 @@ import type {
   RelayCapabilitySnapshot,
   RelayChannelPluginConfig,
   RelayResolvedTarget,
+  RelayTransportEvent,
 } from "../api.js";
 import { resolveAccountConfig } from "./config.js";
 import { mapInboundMessageEvent } from "./relay-events.js";
@@ -24,7 +25,8 @@ export class RelayAccountRuntime {
     private readonly persistence: InMemoryPersistence,
     private readonly onInboundMessage?: (
       message: ReturnType<typeof mapInboundMessageEvent>
-    ) => void
+    ) => void,
+    private readonly onTransportEvent?: (event: RelayTransportEvent) => void
   ) {
     this.threadBindings = new ThreadBindingStore(persistence);
   }
@@ -72,6 +74,10 @@ export class RelayAccountRuntime {
         );
       }
       this.onInboundMessage?.(mapped);
+    });
+
+    client.on("transportEvent", (event: RelayTransportEvent) => {
+      this.onTransportEvent?.(event);
     });
 
     client.on("capabilities", (snapshot: RelayCapabilitySnapshot) => {

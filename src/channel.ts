@@ -2,6 +2,7 @@ import {
   createChatChannelPlugin,
   type ChatChannelPlugin,
   type RelayChannelPluginConfig,
+  type RelayTransportEvent,
 } from "../api.js";
 import { deliverApproval } from "./approval.js";
 import { RelayAccountRuntime } from "./account-runtime.js";
@@ -39,6 +40,7 @@ export type CreateRelayChannelPluginOptions = {
     replyToTransportMessageId?: string | null;
     attachments?: Array<Record<string, unknown>>;
   }) => void;
+  onTransportEvent?: (event: RelayTransportEvent) => void;
 };
 
 export function createRelayChannelPlugin(
@@ -65,7 +67,8 @@ export function createRelayChannelPlugin(
       accountId,
       statusRegistry,
       persistence,
-      options.onInboundMessage
+      options.onInboundMessage,
+      options.onTransportEvent
     );
     runtimes.set(accountId, runtime);
     return runtime;
@@ -163,6 +166,148 @@ export function createRelayChannelPlugin(
           },
           replyToTransportMessageId: input.replyToTransportMessageId,
           sessionKey: input.sessionKey,
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async editMessage(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "message.edit",
+          target: input.target,
+          payload: {
+            transportMessageId: input.transportMessageId,
+            ...(input.text ? { text: input.text } : {}),
+            ...(input.caption ? { caption: input.caption } : {}),
+            ...(input.parseMode ? { parseMode: input.parseMode } : {}),
+            ...(input.replyMarkup ? { replyMarkup: input.replyMarkup } : {}),
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async deleteMessage(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "message.delete",
+          target: input.target,
+          payload: {
+            transportMessageId: input.transportMessageId,
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async setReaction(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "reaction.set",
+          target: input.target,
+          payload: {
+            transportMessageId: input.transportMessageId,
+            emojis: input.emojis,
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async setTyping(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "typing.set",
+          target: input.target,
+          payload: {
+            ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+            ...(input.chatAction ? { chatAction: input.chatAction } : {}),
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async sendPoll(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "poll.send",
+          target: input.target,
+          payload: {
+            question: input.question,
+            options: input.options,
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async pinMessage(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "message.pin",
+          target: input.target,
+          payload: {
+            transportMessageId: input.transportMessageId,
+            ...(input.disableNotification !== undefined
+              ? { disableNotification: input.disableNotification }
+              : {}),
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async unpinMessage(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "message.unpin",
+          target: input.target,
+          payload: {
+            ...(input.transportMessageId ? { transportMessageId: input.transportMessageId } : {}),
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async createTopic(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "topic.create",
+          target: input.target,
+          payload: {
+            name: input.name,
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async editTopic(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "topic.edit",
+          target: {
+            ...input.target,
+            threadId: input.threadId,
+          },
+          payload: {
+            threadId: input.threadId,
+            ...(input.name ? { name: input.name } : {}),
+          },
+          explicitThreadId: input.threadId,
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async closeTopic(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "topic.close",
+          target: {
+            ...input.target,
+            threadId: input.threadId,
+          },
+          payload: {
+            threadId: input.threadId,
+          },
+          explicitThreadId: input.threadId,
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
+      async answerCallback(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "callback.answer",
+          target: input.target,
+          payload: {
+            callbackQueryId: input.callbackQueryId,
+            ...(input.text ? { text: input.text } : {}),
+            ...(input.showAlert !== undefined ? { showAlert: input.showAlert } : {}),
+          },
           idempotencyKey: input.idempotencyKey,
         });
       },

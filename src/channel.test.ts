@@ -441,6 +441,66 @@ describe("relay channel plugin", () => {
     });
   });
 
+  it("dispatches edit and download actions through the negotiated relay channel", async () => {
+    const relay = startMockRelay({
+      onAction(frame, ws) {
+        ws.send(
+          JSON.stringify({
+            type: "event",
+            eventType: "transport.action.completed",
+            payload: {
+              requestId: frame.requestId,
+              actionId: frame.action.actionId,
+              result:
+                frame.action.kind === "file.download.request"
+                  ? {
+                      downloadUrl: "http://127.0.0.1:43129/downloads/download-1",
+                      token: "download-1",
+                    }
+                  : {
+                      transportMessageId: "edited-1001",
+                    },
+            },
+          })
+        );
+      },
+    });
+
+    const plugin = createRelayChannelPlugin({
+      config: parseRelayChannelPluginConfig({
+        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+      }),
+    });
+
+    await plugin.gateway.startAccount("default");
+    await plugin.outbound.editMessage({
+      accountId: "default",
+      target: plugin.directory.resolveTarget("telegram:group:-100123"),
+      transportMessageId: "1001",
+      text: "updated",
+    });
+    const download = await plugin.outbound.requestFileDownload({
+      accountId: "default",
+      target: plugin.directory.resolveTarget("telegram:group:-100123"),
+      fileId: "file-1",
+    });
+
+    expect(relay.seenActions[0]?.action).toMatchObject({
+      kind: "message.edit",
+      payload: {
+        transportMessageId: "1001",
+        text: "updated",
+      },
+    });
+    expect(relay.seenActions[1]?.action).toMatchObject({
+      kind: "file.download.request",
+      payload: {
+        fileId: "file-1",
+      },
+    });
+    expect(download.downloadUrl).toBe("http://127.0.0.1:43129/downloads/download-1");
+  });
+
   it("gates message-tool actions by target capabilities", async () => {
     const relay = startMockRelay({
       capabilities: {
@@ -572,6 +632,47 @@ describe("relay channel plugin", () => {
       state: "degraded",
       reason: "Replay gap: relay_restart_without_durable_buffer",
     });
+  });
+
+  it("forwards transport-level events beyond inbound messages", async () => {
+    const seenEvents: Array<{ eventType: string }> = [];
+    const relay = startMockRelay({
+      afterHello(ws) {
+        setTimeout(() => {
+          ws.send(
+            JSON.stringify({
+              type: "event",
+              eventType: "transport.message.edited",
+              payload: {
+                eventId: "evt-2",
+                accountId: "default",
+                targetScope: "group",
+                conversation: {
+                  transportConversationId: "-100123",
+                },
+                message: {
+                  transportMessageId: "2002",
+                  text: "edited",
+                },
+              },
+            })
+          );
+        }, 5);
+      },
+    });
+
+    const plugin = createRelayChannelPlugin({
+      config: parseRelayChannelPluginConfig({
+        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+      }),
+      onTransportEvent(event) {
+        seenEvents.push({ eventType: event.eventType });
+      },
+    });
+
+    await plugin.gateway.startAccount("default");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(seenEvents).toEqual([{ eventType: "transport.message.edited" }]);
   });
 
   it("keeps security and approvals plugin-owned", async () => {

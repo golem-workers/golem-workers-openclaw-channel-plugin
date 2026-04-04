@@ -176,6 +176,7 @@ export const transportMessageReceivedEventSchema = z.object({
     eventId: z.string(),
     accountId: z.string(),
     cursor: z.string().optional(),
+    targetScope: z.enum(["dm", "group", "topic"]).optional(),
     conversation: z.object({
       transportConversationId: z.string(),
       baseConversationId: z.string().optional(),
@@ -192,6 +193,125 @@ export const transportMessageReceivedEventSchema = z.object({
       attachments: z.array(z.record(z.string(), z.unknown())).default([]),
       editedAtMs: z.number().int().nullable().optional(),
       replyToTransportMessageId: z.string().nullable().optional(),
+    }),
+  }),
+});
+
+const transportConversationPayloadSchema = z.object({
+  eventId: z.string(),
+  accountId: z.string(),
+  cursor: z.string().optional(),
+  targetScope: z.enum(["dm", "group", "topic"]).optional(),
+  conversation: z.object({
+    transportConversationId: z.string(),
+    baseConversationId: z.string().optional(),
+    parentConversationCandidates: z.array(z.string()).optional(),
+  }),
+  thread: z
+    .object({
+      threadId: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const transportMessageEditedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.message.edited"),
+  payload: transportConversationPayloadSchema.extend({
+    message: z.object({
+      transportMessageId: z.string(),
+      text: z.string().nullable().optional(),
+      caption: z.string().nullable().optional(),
+      editedAtMs: z.number().int().nullable().optional(),
+      replyMarkup: z.record(z.string(), z.unknown()).optional(),
+    }),
+  }),
+});
+
+export const transportMessageDeletedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.message.deleted"),
+  payload: transportConversationPayloadSchema.extend({
+    message: z.object({
+      transportMessageId: z.string(),
+    }),
+  }),
+});
+
+export const transportReactionUpdatedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.reaction.updated"),
+  payload: transportConversationPayloadSchema.extend({
+    message: z.object({
+      transportMessageId: z.string(),
+    }),
+    reaction: z.object({
+      senderId: z.string().optional(),
+      emojis: z.array(z.string()).default([]),
+    }),
+  }),
+});
+
+export const transportCallbackReceivedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.callback.received"),
+  payload: transportConversationPayloadSchema.extend({
+    callback: z.object({
+      callbackQueryId: z.string(),
+      data: z.string().nullable().optional(),
+      fromUserId: z.string().optional(),
+      transportMessageId: z.string().optional(),
+    }),
+  }),
+});
+
+export const transportPollUpdatedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.poll.updated"),
+  payload: transportConversationPayloadSchema.extend({
+    poll: z.object({
+      pollId: z.string(),
+      transportMessageId: z.string().optional(),
+      question: z.string().optional(),
+      totalVoterCount: z.number().int().nonnegative().optional(),
+      isClosed: z.boolean().optional(),
+    }),
+  }),
+});
+
+export const transportTopicUpdatedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.topic.updated"),
+  payload: transportConversationPayloadSchema.extend({
+    topic: z.object({
+      threadId: z.string(),
+      title: z.string().optional(),
+      state: z.enum(["created", "edited", "closed", "reopened"]).optional(),
+    }),
+  }),
+});
+
+export const transportDeliveryReceiptEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.delivery.receipt"),
+  payload: z.object({
+    accountId: z.string(),
+    actionId: z.string().optional(),
+    requestId: z.string().optional(),
+    transportMessageId: z.string().optional(),
+    status: z.enum(["sent", "delivered", "failed"]),
+    code: z.string().optional(),
+    message: z.string().optional(),
+  }),
+});
+
+export const transportTypingUpdatedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.typing.updated"),
+  payload: transportConversationPayloadSchema.extend({
+    typing: z.object({
+      senderId: z.string().optional(),
+      active: z.boolean(),
     }),
   }),
 });
@@ -250,6 +370,14 @@ export const controlPlaneEventSchema = z.union([
   transportActionCompletedEventSchema,
   transportActionFailedEventSchema,
   transportMessageReceivedEventSchema,
+  transportMessageEditedEventSchema,
+  transportMessageDeletedEventSchema,
+  transportReactionUpdatedEventSchema,
+  transportCallbackReceivedEventSchema,
+  transportPollUpdatedEventSchema,
+  transportTopicUpdatedEventSchema,
+  transportDeliveryReceiptEventSchema,
+  transportTypingUpdatedEventSchema,
   transportAccountStatusEventSchema,
   transportCapabilitiesUpdatedEventSchema,
   replayGapEventSchema,
