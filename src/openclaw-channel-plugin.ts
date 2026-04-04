@@ -260,9 +260,8 @@ export const relayChannelOpenclawPlugin = {
   },
   gateway: {
     async startAccount({ cfg, accountId, account, abortSignal }) {
-      const runtime = await ensureRuntimeStarted(cfg, accountId ?? account?.accountId ?? null);
+      await ensureRuntimeStarted(cfg, accountId ?? account?.accountId ?? null);
       await waitForAbort(abortSignal);
-      await runtime.stop();
     },
     async stopAccount({ cfg, accountId, account }) {
       const runtime = getRuntime(cfg, accountId ?? account?.accountId ?? null);

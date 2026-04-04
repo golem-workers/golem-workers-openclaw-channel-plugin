@@ -155,5 +155,22 @@ describe("relayChannelOpenclawPlugin", () => {
     controller.abort();
     await task;
     expect(settled).toBe(true);
+
+    expect(
+      relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
+        cfg: runtimeCfg as never,
+        account: { accountId: "default" } as never,
+      } as never)
+    ).toMatchObject({
+      accountId: "default",
+      running: true,
+      healthState: "healthy",
+    });
+
+    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+      cfg: runtimeCfg as never,
+      accountId: "default",
+      account: { accountId: "default" } as never,
+    } as never);
   });
 });

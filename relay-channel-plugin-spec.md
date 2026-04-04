@@ -373,6 +373,11 @@ The plugin should describe relay behavior in normal channel runtime terms.
 - persist replay cursors and durable plugin-owned routing state
 - mark the account runtime as stopped in plugin status
 
+Gateway task abort alone must not be treated as a full account shutdown. The
+plugin should keep the account runtime alive across supervisor abort/restart
+cycles unless `gateway.stopAccount(...)` is invoked or an account-scoped reload
+explicitly requires teardown.
+
 ### Reload And Config Change
 
 Plugin `lifecycle` behavior should distinguish:
