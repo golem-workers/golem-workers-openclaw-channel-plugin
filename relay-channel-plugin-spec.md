@@ -187,6 +187,12 @@ This spec keeps the same architectural split:
 - OpenClaw sees a normal channel plugin
 - the relay acts like a transport runtime behind that plugin
 
+For Telegram Bot API in the golem-workers stack, inbound update ownership stays
+on backend poller/webhook infrastructure. Backend forwards normalized
+`transport_event` frames to relay, and relay/plugin keep the control-plane/data-
+plane contract stable without introducing a second Telegram ingress on the
+agent.
+
 ## Plugin Shape
 
 The plugin should be implemented as a channel plugin package with the usual

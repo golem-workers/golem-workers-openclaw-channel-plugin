@@ -78,9 +78,11 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 - OpenClaw core integration still depends on the host SDK surface; the generic
   relay plugin package already exposes richer action handlers than the current
   OpenClaw runtime invokes directly
-- backend-originated transport events currently flow through the existing relay
-  push ingress as `transport_event`; broader Telegram update ownership can be
-  moved fully into relay later without changing the control-plane wire format
+- backend-originated transport events flow through the existing relay push
+  ingress as `transport_event`; for Telegram Bot API in this stack, backend
+  remains the owner of polling/webhook ingestion and forwards normalized update
+  families such as edited messages, callbacks, reactions, polls, and topic
+  updates to the plugin through relay
 
 ## Deploy To Agent
 
