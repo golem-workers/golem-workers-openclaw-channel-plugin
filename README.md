@@ -15,13 +15,13 @@ focused contract tests.
   and gateway runtime hooks
 - account-scoped runtime registry and WebSocket relay client
 - canonical target resolution, session routing, outbound route building, and
-  durable in-memory persistence helpers
+  stateless handle-based routing helpers
 - outbound text/media send plus capability-gated edit, delete, reaction,
   typing, poll, pin, topic, callback-answer, and file-download request actions
 - capability-gated shared message-tool action discovery
 - transport-level event decoding for inbound message edits/deletes, reactions,
   callbacks, polls, topic updates, delivery receipts, and typing updates
-- replay-gap, reconnect, and duplicate-terminal-event handling tests
+- reconnect and duplicate-terminal-event handling tests
 
 ## Project structure
 
@@ -44,14 +44,12 @@ focused contract tests.
     ├── outbound-adapter.ts
     ├── outbound-session-route.ts
     ├── pairing.ts
-    ├── persistence.ts
     ├── relay-client.ts
     ├── relay-events.ts
     ├── security.ts
     ├── session-conversation.ts
     ├── status.ts
     ├── target-resolution.ts
-    ├── thread-bindings.ts
     └── protocol/
 ```
 
@@ -73,7 +71,16 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 ## Current limitations
 
-- persistence is in-memory only; no durable store backend is wired yet
+- the canonical routing model is now opaque-handle based, but the host OpenClaw
+  SDK surface still exposes some legacy chat-kind fields for compatibility
+- control-plane transport events and outbound action envelopes are now
+  handle-first (`conversation.handle`, `thread.handle`); relay-side parsers may
+  still tolerate legacy compatibility fields during migration
+- relay hello/capability negotiation now supports provider profiles and
+  normalized provider features, but older legacy capability maps are still
+  carried on the wire for migration compatibility
+- plugin runtime is intentionally stateless: reconnects do not restore replay
+  cursors or thread bindings, and message gaps during disconnects are tolerated
 - directory lookup is local grammar-only; no live relay directory API is used yet
 - OpenClaw core integration still depends on the host SDK surface; the generic
   relay plugin package already exposes richer action handlers than the current

@@ -10,7 +10,6 @@ import type {
 import {
   helloRequestSchema,
   parseControlPlaneMessage,
-  replayRequestSchema,
   transportActionRequestSchema,
 } from "./protocol/control-plane.js";
 import { REQUIRED_CORE_CAPABILITIES } from "./types.js";
@@ -116,19 +115,6 @@ export class RelayClient extends EventEmitter {
     });
   }
 
-  public requestReplay(cursor: string) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    const frame = replayRequestSchema.parse({
-      type: "request",
-      requestType: "transport.replay",
-      requestId: randomUUID(),
-      cursor,
-    });
-    this.socket.send(JSON.stringify(frame));
-  }
-
   private async openSocket(): Promise<RelayCapabilitySnapshot> {
     return await new Promise<RelayCapabilitySnapshot>((resolve, reject) => {
       const socket = new WebSocket(this.options.url);
@@ -183,6 +169,8 @@ export class RelayClient extends EventEmitter {
               coreCapabilities: parsed.coreCapabilities,
               optionalCapabilities: parsed.optionalCapabilities,
               providerCapabilities: parsed.providerCapabilities,
+              providerFeatures: parsed.providerFeatures,
+              providerProfiles: parsed.providerProfiles,
               targetCapabilities: parsed.targetCapabilities,
               limits: parsed.limits,
               transport: parsed.transport,
@@ -299,10 +287,6 @@ export class RelayClient extends EventEmitter {
         this.capabilitySnapshot = event.payload;
         this.emit("capabilities", event.payload);
         this.emit("status", { state: "healthy", capabilities: event.payload });
-        break;
-      }
-      case "transport.replay.gap": {
-        this.emit("replayGap", event.payload);
         break;
       }
       case "transport.protocol.error": {

@@ -2,7 +2,7 @@ import type { RelayResolvedTarget, RelayTargetScope } from "../api.js";
 
 type ParsedExplicitTarget = {
   channel: string;
-  scope: RelayTargetScope;
+  scope?: RelayTargetScope;
   conversationId: string;
   threadId?: string | null;
 };
@@ -13,18 +13,27 @@ export function normalizeTarget(input: string): string {
 
 export function parseExplicitTarget(input: string): ParsedExplicitTarget | null {
   const normalized = normalizeTarget(input);
-  const match = normalized.match(
+  const legacyMatch = normalized.match(
     /^(?<channel>[a-z0-9_-]+):(?<scope>dm|group|topic):(?<conversationId>[^#]+?)(?:#(?<threadId>[^#]+))?$/
   );
-  if (!match?.groups) {
+  if (legacyMatch?.groups) {
+    return {
+      channel: legacyMatch.groups.channel,
+      scope: legacyMatch.groups.scope as RelayTargetScope,
+      conversationId: legacyMatch.groups.conversationId,
+      threadId: legacyMatch.groups.threadId ?? null,
+    };
+  }
+  const opaqueMatch = normalized.match(
+    /^(?<channel>[a-z0-9_-]+):(?<conversationId>[^#]+?)(?:#(?<threadId>[^#]+))?$/
+  );
+  if (!opaqueMatch?.groups) {
     return null;
   }
-
   return {
-    channel: match.groups.channel,
-    scope: match.groups.scope as RelayTargetScope,
-    conversationId: match.groups.conversationId,
-    threadId: match.groups.threadId ?? null,
+    channel: opaqueMatch.groups.channel,
+    conversationId: opaqueMatch.groups.conversationId,
+    threadId: opaqueMatch.groups.threadId ?? null,
   };
 }
 
@@ -43,9 +52,13 @@ export function resolveTarget(input: string): RelayResolvedTarget {
   const explicit = parseExplicitTarget(input);
   if (explicit) {
     return {
-      to: `${explicit.channel}:${explicit.scope}:${explicit.conversationId}`,
+      to: explicit.scope
+        ? `${explicit.channel}:${explicit.scope}:${explicit.conversationId}`
+        : `${explicit.channel}:${explicit.conversationId}`,
       kind: explicit.scope,
       display: formatDisplay(explicit.channel, explicit.scope, explicit.conversationId, explicit.threadId),
+      conversationHandle: explicit.conversationId,
+      threadHandle: explicit.threadId ?? null,
       threadId: explicit.threadId,
       transportTarget: {
         channel: explicit.channel,
@@ -58,9 +71,11 @@ export function resolveTarget(input: string): RelayResolvedTarget {
   const normalized = normalizeTarget(input);
   const transportId = normalized.replace(/^@/, "user:");
   return {
-    to: `relay:${scope}:${transportId}`,
+    to: `relay:${transportId}`,
     kind: scope,
     display: transportId,
+    conversationHandle: transportId,
+    threadHandle: null,
     threadId: null,
     transportTarget: {
       channel: "relay",
@@ -73,19 +88,20 @@ export function formatTargetDisplay(target: RelayResolvedTarget): string {
   return formatDisplay(
     target.transportTarget.channel ?? "relay",
     target.kind,
-    target.transportTarget.chatId ?? target.to,
-    target.threadId ?? null
+    target.conversationHandle ?? target.transportTarget.chatId ?? target.to,
+    target.threadHandle ?? target.threadId ?? null
   );
 }
 
 function formatDisplay(
   channel: string,
-  scope: RelayTargetScope,
+  scope: RelayTargetScope | undefined,
   conversationId: string,
   threadId?: string | null
 ): string {
+  const prefix = scope ? `${channel}:${scope}:${conversationId}` : `${channel}:${conversationId}`;
   if (threadId) {
-    return `${channel}:${scope}:${conversationId}#${threadId}`;
+    return `${prefix}#${threadId}`;
   }
-  return `${channel}:${scope}:${conversationId}`;
+  return prefix;
 }

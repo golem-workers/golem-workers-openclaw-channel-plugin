@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { JsonValue } from "../../api.js";
 
 export const relayTransportSchema = z.object({
   provider: z.string(),
@@ -6,11 +7,34 @@ export const relayTransportSchema = z.object({
 });
 
 export const capabilityMapSchema = z.record(z.string(), z.boolean());
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)])
+);
+const jsonRecordSchema = z.record(z.string(), jsonValueSchema);
 
 export const capabilitySnapshotSchema = z.object({
   coreCapabilities: capabilityMapSchema,
   optionalCapabilities: capabilityMapSchema,
   providerCapabilities: capabilityMapSchema,
+  providerFeatures: jsonRecordSchema.optional(),
+  providerProfiles: z
+    .record(
+      z.string(),
+      z.object({
+        transport: relayTransportSchema,
+        coreCapabilities: capabilityMapSchema,
+        optionalCapabilities: capabilityMapSchema,
+        providerCapabilities: capabilityMapSchema,
+        providerFeatures: jsonRecordSchema.optional(),
+        targetCapabilities: z.record(z.string(), capabilityMapSchema).optional(),
+        limits: z.object({
+          maxUploadBytes: z.number().int().positive().optional(),
+          maxCaptionBytes: z.number().int().positive().optional(),
+          maxPollOptions: z.number().int().positive().optional(),
+        }),
+      })
+    )
+    .optional(),
   targetCapabilities: z.record(z.string(), capabilityMapSchema).optional(),
   limits: z.object({
     maxUploadBytes: z.number().int().positive().optional(),
@@ -49,6 +73,8 @@ export const helloResponseSchema = z.object({
   coreCapabilities: capabilityMapSchema,
   optionalCapabilities: capabilityMapSchema,
   providerCapabilities: capabilityMapSchema,
+  providerFeatures: jsonRecordSchema.optional(),
+  providerProfiles: capabilitySnapshotSchema.shape.providerProfiles,
   targetCapabilities: z.record(z.string(), capabilityMapSchema).optional(),
   limits: z.object({
     maxUploadBytes: z.number().int().positive().optional(),
@@ -82,14 +108,16 @@ export const transportActionSchema = z.object({
   ]),
   idempotencyKey: z.string(),
   accountId: z.string(),
-  targetScope: z.enum(["dm", "group", "topic"]),
+  targetScope: z.enum(["dm", "group", "topic"]).optional(),
   transportTarget: transportTargetSchema,
   conversation: z.object({
-    transportConversationId: z.string(),
+    handle: z.string().optional(),
+    transportConversationId: z.string().optional(),
     baseConversationId: z.string().nullable().optional(),
     parentConversationCandidates: z.array(z.string()).optional(),
   }),
   thread: z.object({
+    handle: z.string().nullable().optional(),
     threadId: z.string().nullable().optional(),
   }).optional(),
   reply: z.object({
@@ -178,11 +206,13 @@ export const transportMessageReceivedEventSchema = z.object({
     cursor: z.string().optional(),
     targetScope: z.enum(["dm", "group", "topic"]).optional(),
     conversation: z.object({
-      transportConversationId: z.string(),
+      handle: z.string().optional(),
+      transportConversationId: z.string().optional(),
       baseConversationId: z.string().optional(),
       parentConversationCandidates: z.array(z.string()).optional(),
     }),
     thread: z.object({
+      handle: z.string().optional(),
       threadId: z.string().optional(),
     }).optional(),
     message: z.object({
@@ -203,12 +233,14 @@ const transportConversationPayloadSchema = z.object({
   cursor: z.string().optional(),
   targetScope: z.enum(["dm", "group", "topic"]).optional(),
   conversation: z.object({
-    transportConversationId: z.string(),
+    handle: z.string().optional(),
+    transportConversationId: z.string().optional(),
     baseConversationId: z.string().optional(),
     parentConversationCandidates: z.array(z.string()).optional(),
   }),
   thread: z
     .object({
+      handle: z.string().optional(),
       threadId: z.string().optional(),
     })
     .optional(),
@@ -338,23 +370,6 @@ export const transportCapabilitiesUpdatedEventSchema = z.object({
   payload: capabilitySnapshotSchema,
 });
 
-export const replayRequestSchema = z.object({
-  type: z.literal("request"),
-  requestType: z.literal("transport.replay"),
-  requestId: z.string(),
-  cursor: z.string(),
-});
-
-export const replayGapEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.replay.gap"),
-  payload: z.object({
-    fromCursor: z.string(),
-    toCursor: z.string(),
-    reason: z.string(),
-  }),
-});
-
 export const protocolErrorSchema = z.object({
   type: z.literal("event"),
   eventType: z.literal("transport.protocol.error"),
@@ -380,7 +395,6 @@ export const controlPlaneEventSchema = z.union([
   transportTypingUpdatedEventSchema,
   transportAccountStatusEventSchema,
   transportCapabilitiesUpdatedEventSchema,
-  replayGapEventSchema,
   protocolErrorSchema,
 ]);
 

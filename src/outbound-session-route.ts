@@ -5,18 +5,24 @@ export function resolveOutboundSessionRoute(input: {
   replyToTransportMessageId?: string | null;
   explicitThreadId?: string | null;
 }) {
-  const threadId = input.explicitThreadId ?? input.resolvedTarget.threadId ?? null;
-  const baseConversationId = input.resolvedTarget.transportTarget.chatId ?? input.resolvedTarget.to;
-  const conversationId =
-    input.resolvedTarget.kind === "topic" && threadId
-      ? `${baseConversationId}:topic:${threadId}`
-      : baseConversationId;
+  const threadHandle =
+    input.explicitThreadId ??
+    input.resolvedTarget.threadHandle ??
+    input.resolvedTarget.threadId ??
+    null;
+  const conversationHandle =
+    input.resolvedTarget.conversationHandle ??
+    input.resolvedTarget.transportTarget.chatId ??
+    input.resolvedTarget.to;
+  const baseConversationId = conversationHandle;
+  const conversationId = threadHandle ? `${conversationHandle}#${threadHandle}` : conversationHandle;
 
   return {
-    targetScope: input.resolvedTarget.kind,
+    conversationHandle,
     conversationId,
     baseConversationId,
-    threadId,
+    threadHandle,
+    threadId: input.explicitThreadId ?? input.resolvedTarget.threadId ?? null,
     replyToTransportMessageId: input.replyToTransportMessageId ?? null,
   };
 }

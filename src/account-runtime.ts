@@ -11,25 +11,19 @@ import { resolveAccountConfig } from "./config.js";
 import { mapInboundMessageEvent } from "./relay-events.js";
 import { RelayClient } from "./relay-client.js";
 import { RelayStatusRegistry } from "./status.js";
-import { InMemoryPersistence } from "./persistence.js";
-import { ThreadBindingStore } from "./thread-bindings.js";
 
 export class RelayAccountRuntime {
   private client: RelayClient | null = null;
-  private readonly threadBindings: ThreadBindingStore;
 
   public constructor(
     private readonly config: RelayChannelPluginConfig,
     private readonly accountId: string,
     private readonly statusRegistry: RelayStatusRegistry,
-    private readonly persistence: InMemoryPersistence,
     private readonly onInboundMessage?: (
       message: ReturnType<typeof mapInboundMessageEvent>
     ) => void,
     private readonly onTransportEvent?: (event: RelayTransportEvent) => void
-  ) {
-    this.threadBindings = new ThreadBindingStore(persistence);
-  }
+  ) {}
 
   public async start(): Promise<RelayAccountStatus> {
     if (this.client) {
@@ -47,7 +41,6 @@ export class RelayAccountRuntime {
 
     client.on("status", (status: RelayAccountStatus) => {
       if (status.state === "healthy") {
-        this.persistence.setCapabilitySnapshot(this.accountId, status.capabilities);
         this.statusRegistry.setHealthy(this.accountId, status.capabilities);
       } else if (status.state === "connecting") {
         this.statusRegistry.setConnecting(this.accountId);
@@ -64,15 +57,6 @@ export class RelayAccountRuntime {
 
     client.on("inboundMessage", (event) => {
       const mapped = mapInboundMessageEvent(event);
-      if (mapped.cursor) {
-        this.persistence.setReplayCursor(this.accountId, mapped.cursor);
-      }
-      if (mapped.sessionConversation.id && mapped.sessionConversation.threadId) {
-        this.threadBindings.remember(
-          mapped.sessionConversation.id,
-          mapped.sessionConversation.threadId
-        );
-      }
       this.onInboundMessage?.(mapped);
     });
 
@@ -81,24 +65,12 @@ export class RelayAccountRuntime {
     });
 
     client.on("capabilities", (snapshot: RelayCapabilitySnapshot) => {
-      this.persistence.setCapabilitySnapshot(this.accountId, snapshot);
-    });
-
-    client.on("replayGap", (gap) => {
-      this.statusRegistry.setDegraded(
-        this.accountId,
-        `Replay gap: ${gap.reason}`,
-        this.persistence.getCapabilitySnapshot(this.accountId)
-      );
+      this.statusRegistry.setHealthy(this.accountId, snapshot);
     });
 
     this.client = client;
     this.statusRegistry.setConnecting(this.accountId);
     await client.start();
-    const replayCursor = this.persistence.getReplayCursor(this.accountId);
-    if (replayCursor) {
-      client.requestReplay(replayCursor);
-    }
     return this.statusRegistry.get(this.accountId);
   }
 
@@ -119,11 +91,12 @@ export class RelayAccountRuntime {
   }
 
   public getCapabilitySnapshot(): RelayCapabilitySnapshot | undefined {
-    return this.client?.getCapabilitySnapshot() ?? this.persistence.getCapabilitySnapshot(this.accountId);
-  }
-
-  public getThreadBinding(sessionKey: string): string | undefined {
-    return this.threadBindings.resolve(sessionKey);
+    const live = this.client?.getCapabilitySnapshot();
+    if (live) {
+      return live;
+    }
+    const status = this.statusRegistry.get(this.accountId);
+    return "capabilities" in status ? status.capabilities : undefined;
   }
 
   public async sendAction(input: {
@@ -140,22 +113,27 @@ export class RelayAccountRuntime {
     }
     const actionId = randomUUID();
     const idempotencyKey = input.idempotencyKey ?? actionId;
-    const threadId = input.explicitThreadId ?? input.target.threadId ?? null;
-    const conversationId = input.target.transportTarget.chatId ?? input.target.to;
+    const threadHandle =
+      input.explicitThreadId ??
+      input.target.threadHandle ??
+      input.target.threadId ??
+      null;
+    const conversationHandle =
+      input.target.conversationHandle ?? input.target.transportTarget.chatId ?? input.target.to;
+    const conversationId = conversationHandle;
     const action: RelayActionPayload = {
       actionId,
       kind: input.kind,
       idempotencyKey,
       accountId: this.accountId,
-      targetScope: input.target.kind,
       transportTarget: input.target.transportTarget,
       conversation: {
-        transportConversationId: conversationId,
+        handle: conversationHandle,
         baseConversationId: conversationId,
         parentConversationCandidates: [conversationId],
       },
       thread: {
-        threadId,
+        handle: threadHandle,
       },
       reply: {
         replyToTransportMessageId: input.replyToTransportMessageId ?? null,
@@ -163,25 +141,6 @@ export class RelayAccountRuntime {
       payload: input.payload,
       openclawContext: input.sessionKey ? { sessionKey: input.sessionKey } : undefined,
     };
-
-    this.persistence.setActionRecord({
-      actionId,
-      accountId: this.accountId,
-      idempotencyKey,
-      acceptedAtMs: Date.now(),
-      terminalState: undefined,
-      cursor: this.persistence.getReplayCursor(this.accountId) ?? null,
-    });
-
-    const result = await this.client.dispatchAction(action);
-    this.persistence.setActionRecord({
-      actionId,
-      accountId: this.accountId,
-      idempotencyKey,
-      acceptedAtMs: Date.now(),
-      terminalState: "completed",
-      cursor: this.persistence.getReplayCursor(this.accountId) ?? null,
-    });
-    return result;
+    return await this.client.dispatchAction(action);
   }
 }

@@ -10,6 +10,26 @@ export type RelayCapabilitySnapshot = {
   coreCapabilities: Record<string, boolean>;
   optionalCapabilities: Record<string, boolean>;
   providerCapabilities: Record<string, boolean>;
+  providerFeatures?: Record<string, JsonValue>;
+  providerProfiles?: Record<
+    string,
+    {
+      transport: {
+        provider: string;
+        providerVersion?: string;
+      };
+      coreCapabilities: Record<string, boolean>;
+      optionalCapabilities: Record<string, boolean>;
+      providerCapabilities: Record<string, boolean>;
+      providerFeatures?: Record<string, JsonValue>;
+      targetCapabilities?: Record<string, Record<string, boolean>>;
+      limits: {
+        maxUploadBytes?: number;
+        maxCaptionBytes?: number;
+        maxPollOptions?: number;
+      };
+    }
+  >;
   targetCapabilities?: Record<string, Record<string, boolean>>;
   limits: {
     maxUploadBytes?: number;
@@ -30,6 +50,8 @@ export type RelayAccountStatus =
 
 export type RelaySessionConversation = {
   id: string;
+  conversationHandle?: string;
+  threadHandle?: string | null;
   threadId?: string | null;
   baseConversationId?: string | null;
   parentConversationCandidates?: string[];
@@ -39,8 +61,10 @@ export type RelayTargetScope = "dm" | "group" | "topic";
 
 export type RelayResolvedTarget = {
   to: string;
-  kind: RelayTargetScope;
+  kind?: RelayTargetScope;
   display?: string;
+  conversationHandle?: string;
+  threadHandle?: string | null;
   threadId?: string | null;
   transportTarget: Record<string, string>;
 };
@@ -65,15 +89,14 @@ export type RelayActionPayload = {
   kind: RelayActionKind;
   idempotencyKey: string;
   accountId: string;
-  targetScope: RelayTargetScope;
   transportTarget: Record<string, string>;
   conversation: {
-    transportConversationId: string;
+    handle?: string;
     baseConversationId?: string | null;
     parentConversationCandidates?: string[];
   };
   thread?: {
-    threadId?: string | null;
+    handle?: string | null;
   };
   reply?: {
     replyToTransportMessageId?: string | null;
@@ -170,7 +193,6 @@ export type RelayInboundMessageEvent = {
   accountId: string;
   cursor?: string;
   sessionConversation: RelaySessionConversation;
-  targetScope: RelayTargetScope;
   senderId: string;
   text?: string | null;
   transportMessageId: string;
@@ -229,10 +251,10 @@ export type ChatChannelPlugin = {
   };
   messaging: {
     resolveSessionConversation(input: {
-      targetScope: RelayTargetScope;
-      transportConversationId: string;
+      conversationHandle?: string;
       baseConversationId?: string | null;
       parentConversationCandidates?: string[];
+      threadHandle?: string | null;
       threadId?: string | null;
     }): RelaySessionConversation;
     resolveOutboundSessionRoute(input: {
@@ -240,15 +262,16 @@ export type ChatChannelPlugin = {
       replyToTransportMessageId?: string | null;
       explicitThreadId?: string | null;
     }): {
-      targetScope: RelayTargetScope;
+      conversationHandle: string;
       conversationId: string;
       baseConversationId: string;
+      threadHandle?: string | null;
       threadId?: string | null;
       replyToTransportMessageId?: string | null;
     };
   };
   actions: {
-    describeMessageTool(accountId: string, scope?: RelayTargetScope): RelayMessageToolDescription;
+    describeMessageTool(accountId: string, scope?: string): RelayMessageToolDescription;
   };
   outbound: {
     sendText(input: {
@@ -278,7 +301,7 @@ export type ChatChannelPlugin = {
       transportMessageId: string;
       text?: string;
       caption?: string;
-      parseMode?: TelegramParseModeLike;
+      parseMode?: string;
       replyMarkup?: Record<string, JsonValue>;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
@@ -375,5 +398,3 @@ export function createChatChannelPlugin(plugin: ChatChannelPlugin): ChatChannelP
 export function defineChannelPluginEntry(entry: ChatChannelPluginEntry): ChatChannelPluginEntry {
   return entry;
 }
-
-type TelegramParseModeLike = "HTML" | "MarkdownV2" | "Markdown";

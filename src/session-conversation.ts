@@ -1,35 +1,32 @@
-import type { RelaySessionConversation, RelayTargetScope } from "../api.js";
+import type { RelaySessionConversation } from "../api.js";
 
 export function resolveSessionConversation(input: {
-  targetScope: RelayTargetScope;
-  transportConversationId: string;
+  conversationHandle?: string;
   baseConversationId?: string | null;
   parentConversationCandidates?: string[];
+  threadHandle?: string | null;
   threadId?: string | null;
 }): RelaySessionConversation {
-  const baseConversationId = input.baseConversationId ?? input.transportConversationId;
+  const conversationHandle =
+    input.conversationHandle ?? input.baseConversationId ?? "unknown";
+  const threadHandle = input.threadHandle ?? input.threadId ?? null;
+  const baseConversationId = input.baseConversationId ?? conversationHandle;
   const parentConversationCandidates = input.parentConversationCandidates ?? [baseConversationId];
-  const id = buildConversationId(
-    input.targetScope,
-    input.transportConversationId,
-    input.threadId ?? null
-  );
+  const id = buildConversationId(conversationHandle, threadHandle);
 
   return {
     id,
+    conversationHandle,
+    threadHandle,
     threadId: input.threadId ?? null,
     baseConversationId,
     parentConversationCandidates,
   };
 }
 
-function buildConversationId(
-  targetScope: RelayTargetScope,
-  transportConversationId: string,
-  threadId?: string | null
-): string {
-  if (targetScope === "topic" && threadId) {
-    return `${transportConversationId}:topic:${threadId}`;
+function buildConversationId(conversationHandle: string, threadHandle?: string | null): string {
+  if (threadHandle) {
+    return `${conversationHandle}#${threadHandle}`;
   }
-  return transportConversationId;
+  return conversationHandle;
 }

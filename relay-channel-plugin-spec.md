@@ -119,7 +119,7 @@ The plugin owns the OpenClaw channel contract:
 - channel status snapshots and degraded-state reporting
 - account runtime lifecycle such as start, stop, reload, and reconnect
 - conversion between relay events and OpenClaw channel semantics
-- minimal persisted state needed for routing, replay safety, or thread bindings
+- minimal runtime state needed for per-connection action tracking and status
 
 The plugin must not treat the relay as the source of truth for OpenClaw session
 identity.
@@ -178,7 +178,7 @@ files:
 
 - inbound transport can have multiple modes such as polling and webhook
 - session routing and conversation identity live in plugin code
-- thread bindings are plugin-managed state
+- thread selection is carried explicitly in outbound actions when needed
 - outbound features include rich transport operations beyond plain text
 - provider transport does not own OpenClaw session semantics
 
@@ -339,7 +339,7 @@ V1 uses one relay connection per configured account.
 Rationale:
 
 - account-scoped capabilities map naturally to OpenClaw account status
-- reconnect, replay cursor tracking, and degraded state stay isolated
+- reconnect and degraded state stay isolated
 - provider identity and auth failures remain account-local
 - lifecycle methods can start and stop accounts independently
 
@@ -348,8 +348,7 @@ Rules:
 - one configured account maps to one plugin-owned account runtime
 - one account runtime owns one control-plane connection to the relay
 - one relay process may serve many account runtimes
-- account runtimes must not share replay cursors, idempotency keys, or
-  degraded-state flags
+- account runtimes must not share idempotency keys or degraded-state flags
 - if a relay implementation internally multiplexes provider connections, that is
   hidden behind the per-account plugin runtime contract
 
@@ -366,7 +365,7 @@ The plugin should describe relay behavior in normal channel runtime terms.
 - establish the control-plane connection
 - run the account-scoped hello handshake
 - fetch capability and provider identity snapshots
-- restore replay cursors, subscriptions, and durable thread bindings
+- restore the control-plane subscription and capability snapshot for the live connection
 - publish an initial status snapshot
 
 ### Account Shutdown
@@ -376,7 +375,7 @@ The plugin should describe relay behavior in normal channel runtime terms.
 - stop new outbound admission for that account
 - close the control-plane connection
 - flush or abandon in-flight actions according to timeout policy
-- persist replay cursors and durable plugin-owned routing state
+- abandon connection-local state that is not explicitly restored by the caller
 - mark the account runtime as stopped in plugin status
 
 Gateway task abort alone must not be treated as a full account shutdown. The
@@ -419,7 +418,7 @@ Recommended plugin behavior:
 - connect on account runtime startup
 - back off on reconnect with bounded exponential retry
 - surface degraded account status when the relay is unavailable
-- restore subscriptions, capability snapshots, and replay cursors after reconnect
+- restore subscriptions and capability snapshots after reconnect
 
 ## Relay Wire Protocol
 
@@ -590,7 +589,6 @@ Each action carries:
 - `actionId`
 - `idempotencyKey`
 - `accountId`
-- `targetScope`
 - `transportTarget`
 - `conversation`
 - `thread`
@@ -610,16 +608,17 @@ Example:
     "kind": "message.send",
     "idempotencyKey": "run-123:send-1",
     "accountId": "default",
-    "targetScope": "topic",
     "transportTarget": {
       "channel": "telegram",
       "chatId": "-100123456"
     },
     "conversation": {
+      "handle": "-100123456",
       "transportConversationId": "-100123456",
       "baseConversationId": "-100123456"
     },
     "thread": {
+      "handle": "77",
       "threadId": "77"
     },
     "reply": {
@@ -740,11 +739,13 @@ Example inbound message:
     "eventId": "evt-1",
     "accountId": "default",
     "conversation": {
+      "handle": "-100123456",
       "transportConversationId": "-100123456",
       "baseConversationId": "-100123456",
       "parentConversationCandidates": ["-100123456"]
     },
     "thread": {
+      "handle": "77",
       "threadId": "77"
     },
     "message": {
@@ -789,10 +790,12 @@ OpenClaw messaging adapter contract.
 
 Recommended relay payload fields:
 
-- `transportConversationId`
+- `conversation.handle`
+- legacy `transportConversationId`
 - `baseConversationId` when the relay can identify it cheaply
 - `parentConversationCandidates` when the relay can identify them cheaply
-- `threadId`
+- `thread.handle`
+- legacy `threadId`
 - `replyToTransportMessageId`
 
 The plugin remains the source of truth for final canonical values, even if the
@@ -800,10 +803,12 @@ relay helps precompute them.
 
 Recommended model:
 
-- relay provides `transportConversationId`
+- relay provides `conversation.handle` as the canonical opaque conversation id
+- relay may also provide legacy `transportConversationId` during migration
 - relay may provide `baseConversationId`
 - relay may provide ordered `parentConversationCandidates`
-- relay may provide `threadId`
+- relay may provide `thread.handle` as the canonical opaque thread id
+- relay may also provide legacy `threadId` during migration
 - plugin builds a canonical OpenClaw-facing session conversation from those
   fields
 
@@ -967,12 +972,10 @@ V1 state ownership should follow this bias:
 - plugin owns OpenClaw-facing routing state
 - relay may keep transport-local caches needed for efficient execution
 
-Plugin-owned state may include:
+Plugin-owned state should stay minimal:
 
-- thread bindings
-- replay cursor tracking for relay subscriptions
-- transport-to-session correlation caches
-- message-id mappings required for edits, deletes, or replies
+- live account status and capability snapshots
+- in-flight action tracking for the current connection
 
 Relay-owned state may include:
 
@@ -982,8 +985,8 @@ Relay-owned state may include:
 - provider-specific event cursors
 - short-lived callback correlation windows
 
-This mirrors the Telegram precedent, where the plugin keeps meaningful
-transport-adjacent state such as thread bindings and update offsets.
+This implementation intentionally does not keep durable plugin-owned transport
+state across reconnects.
 
 ## Replay, Reconnect, And Idempotency
 
@@ -992,7 +995,6 @@ The plugin must tolerate relay restarts and reconnects.
 Required protocol features:
 
 - monotonic event cursor or sequence number
-- replay request on reconnect
 - idempotency key preservation for outbound actions
 - stable action IDs for correlation
 - explicit timeout semantics for lost terminal action results
@@ -1000,28 +1002,10 @@ Required protocol features:
 
 Recommended behavior:
 
-- plugin stores the last acknowledged inbound cursor
-- on reconnect, plugin requests replay from that cursor
-- relay replays durable recent events when available
-- if replay is unavailable, relay emits an explicit gap event
 - duplicate terminal events for the same `actionId` must be safe to ignore
 - if `accepted` was emitted but no terminal event arrives before timeout, the
   plugin should mark the action as unknown or timed out instead of assuming
   success
-
-Gap event example:
-
-```json
-{
-  "type": "event",
-  "eventType": "transport.replay.gap",
-  "payload": {
-    "fromCursor": "104",
-    "toCursor": "121",
-    "reason": "relay_restart_without_durable_buffer"
-  }
-}
-```
 
 ## Error Model
 
@@ -1126,12 +1110,8 @@ V1 does not choose:
 
 For v1:
 
-- plugin replay cursors should be durable
-- plugin thread bindings should be durable
-- plugin message-id correlation caches should be durable when required for edit,
-  delete, reply, or callback correctness
-- relay replay buffers should be durable across a relay process restart when
-  practical, but the protocol must still support explicit replay gaps
+- plugin intentionally keeps no durable local state
+- plugin message-id correlation caches are not persisted locally
 - idempotency-key handling must survive reconnects for a bounded retention
   window
 
@@ -1172,11 +1152,9 @@ my-relay-channel/
     target-resolution.ts
     session-conversation.ts
     outbound-session-route.ts
-    thread-bindings.ts
     message-actions.ts
     outbound-adapter.ts
     file-data-plane.ts
-    persistence.ts
     protocol/
       control-plane.ts
       data-plane.ts
@@ -1195,7 +1173,7 @@ my-relay-channel/
   hooks when supported
 - `account-runtime.ts`: account runtime registry and `startAccount` or
   `stopAccount` orchestration
-- `relay-client.ts`: hello handshake, request dispatch, replay, reconnect, and
+- `relay-client.ts`: hello handshake, request dispatch, reconnect, and
   event fan-out
 - `relay-events.ts`: event decoding and mapping from relay events into
   OpenClaw-facing behavior
@@ -1203,13 +1181,11 @@ my-relay-channel/
 - `session-conversation.ts`: canonical `resolveSessionConversation(...)`
 - `outbound-session-route.ts`: canonical
   `resolveOutboundSessionRoute(...)`
-- `thread-bindings.ts`: durable thread-binding manager
 - `message-actions.ts`: `actions.describeMessageTool(...)` and action handlers
 - `outbound-adapter.ts`: send, edit, delete, poll, reaction, and typing relay
   actions
 - `file-data-plane.ts`: upload or download token handling and local HTTP helper
   logic
-- `persistence.ts`: durable plugin-owned state storage
 - `protocol/control-plane.ts`: zod or equivalent typed schemas for hello,
   request, event, and error frames
 - `protocol/data-plane.ts`: typed upload and download token payloads plus HTTP
@@ -1268,21 +1244,16 @@ The protocol schema files should validate:
 - all `transport.action` envelopes
 - all inbound event families
 - capability-update events
-- replay request and replay-gap events
 - upload-plan and download-token payloads
 
 ## Persistence Model
 
-The plugin should persist only plugin-owned state that is needed for correctness
-across restart and reconnect.
+The plugin is intentionally stateless across restart and reconnect.
 
-Recommended durable stores:
+Recommended live-only state:
 
-- replay cursor by `accountId`
-- thread bindings by canonical session key
-- message-id correlations by account plus conversation scope
-- recent outbound action records by `actionId` and `idempotencyKey`
-- last known capability snapshot by `accountId` for status continuity
+- in-flight outbound action tracking by `requestId` and `actionId`
+- last known capability snapshot for the active connection
 
 Recommended non-durable or cache-like state:
 
@@ -1365,7 +1336,6 @@ just internal helper behavior.
 - target normalization and explicit target parsing
 - session conversation mapping
 - outbound session route selection
-- replay cursor persistence logic
 - duplicate-terminal-event handling
 
 ### Integration-Style Plugin Tests

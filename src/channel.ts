@@ -9,7 +9,6 @@ import { RelayAccountRuntime } from "./account-runtime.js";
 import { parseRelayChannelPluginConfig } from "./config.js";
 import { describeMessageTool } from "./message-actions.js";
 import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
-import { InMemoryPersistence } from "./persistence.js";
 import { canPairTarget } from "./pairing.js";
 import { evaluateDirectMessageSecurity } from "./security.js";
 import { resolveSessionConversation } from "./session-conversation.js";
@@ -23,17 +22,17 @@ import {
 
 export type CreateRelayChannelPluginOptions = {
   config?: RelayChannelPluginConfig;
-  persistence?: InMemoryPersistence;
   onInboundMessage?: (message: {
     accountId: string;
     cursor?: string;
     sessionConversation: {
       id: string;
+      conversationHandle?: string;
+      threadHandle?: string | null;
       threadId?: string | null;
       baseConversationId?: string | null;
       parentConversationCandidates?: string[];
     };
-    targetScope: "dm" | "group" | "topic";
     senderId: string;
     text?: string | null;
     transportMessageId: string;
@@ -46,7 +45,6 @@ export type CreateRelayChannelPluginOptions = {
 export function createRelayChannelPlugin(
   options: CreateRelayChannelPluginOptions = {}
 ): ChatChannelPlugin {
-  const persistence = options.persistence ?? new InMemoryPersistence();
   const statusRegistry = new RelayStatusRegistry();
   let currentConfig =
     options.config ??
@@ -66,7 +64,6 @@ export function createRelayChannelPlugin(
       currentConfig,
       accountId,
       statusRegistry,
-      persistence,
       options.onInboundMessage,
       options.onTransportEvent
     );

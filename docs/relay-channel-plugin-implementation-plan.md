@@ -28,8 +28,8 @@ plugin repository.
 ## Step 3. Build account runtime and relay client
 
 - implement account runtime registry in `src/account-runtime.ts`
-- implement relay connect, hello handshake, capability snapshot, reconnect, and
-  replay hooks in `src/relay-client.ts`
+- implement relay connect, hello handshake, capability snapshot, and reconnect
+  hooks in `src/relay-client.ts`
 - correlate requests and actions by `requestId`, `actionId`, and
   `idempotencyKey`
 
@@ -40,8 +40,8 @@ plugin repository.
 - implement `resolveSessionConversation(...)` in `src/session-conversation.ts`
 - implement `resolveOutboundSessionRoute(...)` in
   `src/outbound-session-route.ts`
-- keep replay cursors, thread bindings, message correlations, and recent action
-  records in plugin-owned persistence helpers
+- keep plugin runtime stateless aside from live connection state and in-flight
+  action tracking
 
 ## Step 5. Add delivery and capability gating
 
@@ -57,10 +57,9 @@ plugin repository.
 - use upload/download tokens instead of raw WebSocket bytes
 - keep action lifecycle and final status on the control plane
 
-## Step 7. Harden with replay, tests, and docs
+## Step 7. Harden with reconnect, tests, and docs
 
 - suppress duplicate terminal events safely
-- surface replay gaps explicitly
 - refresh capabilities after reconnect
 - cover unit, integration-style, and conformance scenarios with tests
 - keep `README.md` and this document updated with the implemented contract

@@ -253,6 +253,18 @@ server.on("connection", (ws) => {
         target: frame.action?.transportTarget ?? null,
         payload: frame.action?.payload ?? null,
       }));
+      const conversationId =
+        frame.action?.conversation?.handle ??
+        frame.action?.transportTarget?.chatId ??
+        "mock-conversation";
+      const threadId = frame.action?.thread?.handle ?? frame.action?.thread?.threadId ?? null;
+      const result = {
+        transportMessageId: "mock-message-" + String(actionCounter),
+        conversationId,
+      };
+      if (threadId) {
+        result.threadId = threadId;
+      }
       ws.send(JSON.stringify({
         type: "event",
         eventType: "transport.action.accepted",
@@ -267,19 +279,12 @@ server.on("connection", (ws) => {
         payload: {
           requestId: frame.requestId,
           actionId: frame.action.actionId,
-          result: {
-            transportMessageId: \`mock-message-\${actionCounter}\`,
-            conversationId: frame.action?.conversation?.transportConversationId ?? frame.action?.transportTarget?.chatId ?? "mock-conversation",
-            ...(frame.action?.thread?.threadId ? { threadId: frame.action.thread.threadId } : {}),
-          },
+          result,
         },
       }));
       return;
     }
 
-    if (frame?.requestType === "transport.replay") {
-      console.log(JSON.stringify({ event: "mock-relay-replay", cursor: frame.cursor ?? null }));
-    }
   });
 });
 

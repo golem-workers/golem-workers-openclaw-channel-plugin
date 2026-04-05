@@ -8,7 +8,6 @@ import { RelayAccountRuntime } from "./account-runtime.js";
 import { parseRelayChannelPluginConfig, relayChannelPluginConfigSchema, resolveAccountConfig } from "./config.js";
 import { describeMessageTool } from "./message-actions.js";
 import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
-import { InMemoryPersistence } from "./persistence.js";
 import { inspectRelaySetup } from "./setup.js";
 import { RelayStatusRegistry } from "./status.js";
 import {
@@ -77,11 +76,11 @@ function resolvePluginAccountId(cfg: OpenClawConfig, accountId?: string | null) 
   return accountId ?? parseChannelConfig(cfg).accounts[0]?.id ?? "default";
 }
 
-function mapRelayScopeToDirectoryKind(scope: "dm" | "group" | "topic") {
+function mapRelayScopeToDirectoryKind(scope?: "dm" | "group" | "topic") {
   return scope === "dm" ? "user" : "group";
 }
 
-function mapRelayScopeToChatType(scope: "dm" | "group" | "topic") {
+function mapRelayScopeToChatType(scope?: "dm" | "group" | "topic") {
   return scope === "dm" ? "direct" : "group";
 }
 
@@ -116,7 +115,6 @@ function upsertAccountSection(
   };
 }
 
-const persistence = new InMemoryPersistence();
 const statusRegistry = new RelayStatusRegistry();
 const runtimes = new Map<string, RelayAccountRuntime>();
 
@@ -130,8 +128,7 @@ function getRuntime(cfg: OpenClawConfig, accountId?: string | null) {
   const runtime = new RelayAccountRuntime(
     parseChannelConfig(cfg),
     resolvedAccountId,
-    statusRegistry,
-    persistence
+    statusRegistry
   );
   runtimes.set(resolvedAccountId, runtime);
   return runtime;
@@ -276,7 +273,9 @@ export const relayChannelOpenclawPlugin = {
         return null;
       }
       return {
-        to: `${parsed.channel}:${parsed.scope}:${parsed.conversationId}`,
+        to: parsed.scope
+          ? `${parsed.channel}:${parsed.scope}:${parsed.conversationId}`
+          : `${parsed.channel}:${parsed.conversationId}`,
         threadId: parsed.threadId ?? undefined,
         chatType: mapRelayScopeToChatType(parsed.scope),
       };
@@ -322,7 +321,7 @@ export const relayChannelOpenclawPlugin = {
       looksLikeId(raw, normalized) {
         return parseExplicitTarget(normalized ?? raw) !== null;
       },
-      hint: "Use explicit relay target like telegram:group:<chatId> or telegram:topic:<chatId>#<threadId>",
+      hint: "Use explicit relay target like telegram:<conversationHandle> or telegram:group:<chatId>",
       async resolveTarget({ input }) {
         const resolved = resolveTarget(input);
         return {

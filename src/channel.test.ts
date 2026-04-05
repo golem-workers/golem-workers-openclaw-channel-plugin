@@ -3,7 +3,6 @@ import { WebSocketServer } from "ws";
 import { createRelayChannelPlugin } from "./channel.js";
 import { parseRelayChannelPluginConfig } from "./config.js";
 import { RelayFileDataPlane } from "./file-data-plane.js";
-import { InMemoryPersistence } from "./persistence.js";
 import { helloRequestSchema } from "./protocol/control-plane.js";
 import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
 import { resolveSessionConversation } from "./session-conversation.js";
@@ -16,7 +15,6 @@ type MockRelayOptions = {
     targetCapabilities?: Record<string, Record<string, boolean>>;
   };
   onAction?: (actionFrame: Record<string, any>, ws: import("ws").WebSocket) => void;
-  onReplay?: (replayFrame: Record<string, any>, ws: import("ws").WebSocket) => void;
   afterHello?: (ws: import("ws").WebSocket) => void;
 };
 
@@ -98,9 +96,6 @@ function startMockRelay(options: MockRelayOptions = {}) {
         options.onAction?.(frame, ws);
         return;
       }
-      if (frame.requestType === "transport.replay") {
-        options.onReplay?.(frame, ws);
-      }
     });
   });
 
@@ -174,14 +169,15 @@ describe("relay channel plugin", () => {
   it("maps session conversation with topic-aware ids", () => {
     expect(
       resolveSessionConversation({
-        targetScope: "topic",
-        transportConversationId: "-100123",
+        conversationHandle: "-100123",
         baseConversationId: "-100123",
         parentConversationCandidates: ["-100123"],
         threadId: "77",
       })
     ).toEqual({
-      id: "-100123:topic:77",
+      id: "-100123#77",
+      conversationHandle: "-100123",
+      threadHandle: "77",
       threadId: "77",
       baseConversationId: "-100123",
       parentConversationCandidates: ["-100123"],
@@ -200,19 +196,13 @@ describe("relay channel plugin", () => {
         replyToTransportMessageId: "555",
       })
     ).toEqual({
-      targetScope: "topic",
-      conversationId: "-100123:topic:77",
+      conversationHandle: "-100123",
+      conversationId: "-100123#77",
       baseConversationId: "-100123",
+      threadHandle: "77",
       threadId: "77",
       replyToTransportMessageId: "555",
     });
-  });
-
-  it("stores replay cursor durably", () => {
-    const persistence = new InMemoryPersistence();
-    persistence.setReplayCursor("default", "104");
-
-    expect(persistence.getReplayCursor("default")).toBe("104");
   });
 
   it("suppresses duplicate terminal events", async () => {
@@ -310,11 +300,11 @@ describe("relay channel plugin", () => {
                 accountId: "default",
                 cursor: "106",
                 conversation: {
-                  transportConversationId: "-100123",
+                  handle: "-100123",
                   baseConversationId: "-100123",
                   parentConversationCandidates: ["-100123"],
                 },
-                thread: { threadId: "77" },
+                thread: { handle: "77", threadId: "77" },
                 message: {
                   transportMessageId: "2002",
                   senderId: "user:555",
@@ -340,7 +330,7 @@ describe("relay channel plugin", () => {
     await plugin.gateway.startAccount("default");
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(inboundMessages).toEqual([{ sessionId: "-100123:topic:77", text: "ping" }]);
+    expect(inboundMessages).toEqual([{ sessionId: "-100123#77", text: "ping" }]);
   });
 
   it("emits the expected outbound text action envelope", async () => {
@@ -380,9 +370,8 @@ describe("relay channel plugin", () => {
 
     expect(relay.seenActions[0]?.action).toMatchObject({
       kind: "message.send",
-      targetScope: "topic",
       thread: {
-        threadId: "77",
+        handle: "77",
       },
       reply: {
         replyToTransportMessageId: "987",
@@ -599,41 +588,6 @@ describe("relay channel plugin", () => {
     expect(result.transportMessageId).toBe("ok-1");
   });
 
-  it("surfaces replay gaps explicitly", async () => {
-    const persistence = new InMemoryPersistence();
-    persistence.setReplayCursor("default", "104");
-    const relay = startMockRelay({
-      onReplay(_frame, ws) {
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.replay.gap",
-            payload: {
-              fromCursor: "104",
-              toCursor: "121",
-              reason: "relay_restart_without_durable_buffer",
-            },
-          })
-        );
-      },
-    });
-
-    const plugin = createRelayChannelPlugin({
-      persistence,
-      config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
-      }),
-    });
-
-    await plugin.gateway.startAccount("default");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(plugin.status.getAccountStatus("default")).toMatchObject({
-      state: "degraded",
-      reason: "Replay gap: relay_restart_without_durable_buffer",
-    });
-  });
-
   it("forwards transport-level events beyond inbound messages", async () => {
     const seenEvents: Array<{ eventType: string }> = [];
     const relay = startMockRelay({
@@ -646,9 +600,8 @@ describe("relay channel plugin", () => {
               payload: {
                 eventId: "evt-2",
                 accountId: "default",
-                targetScope: "group",
                 conversation: {
-                  transportConversationId: "-100123",
+                  handle: "-100123",
                 },
                 message: {
                   transportMessageId: "2002",

@@ -1,27 +1,18 @@
-import type { RelayInboundMessageEvent, RelayTargetScope } from "../api.js";
+import type { RelayInboundMessageEvent } from "../api.js";
 import { resolveSessionConversation } from "./session-conversation.js";
-
-export function inferRelayTargetScope(input: {
-  targetScope?: RelayTargetScope;
-  threadId?: string;
-}): RelayTargetScope {
-  if (input.targetScope) {
-    return input.targetScope;
-  }
-  return input.threadId ? "topic" : "group";
-}
 
 export function mapInboundMessageEvent(frame: {
   payload: {
     accountId: string;
     cursor?: string;
-    targetScope?: RelayTargetScope;
     conversation: {
-      transportConversationId: string;
+      handle?: string;
+      transportConversationId?: string;
       baseConversationId?: string;
       parentConversationCandidates?: string[];
     };
     thread?: {
+      handle?: string;
       threadId?: string;
     };
     message: {
@@ -33,21 +24,17 @@ export function mapInboundMessageEvent(frame: {
     };
   };
 }): RelayInboundMessageEvent {
-  const targetScope = inferRelayTargetScope({
-    targetScope: frame.payload.targetScope,
-    threadId: frame.payload.thread?.threadId,
-  });
   return {
     accountId: frame.payload.accountId,
     cursor: frame.payload.cursor,
     sessionConversation: resolveSessionConversation({
-      targetScope,
-      transportConversationId: frame.payload.conversation.transportConversationId,
+      conversationHandle:
+        frame.payload.conversation.handle ?? frame.payload.conversation.transportConversationId,
       baseConversationId: frame.payload.conversation.baseConversationId,
       parentConversationCandidates: frame.payload.conversation.parentConversationCandidates,
+      threadHandle: frame.payload.thread?.handle ?? frame.payload.thread?.threadId,
       threadId: frame.payload.thread?.threadId,
     }),
-    targetScope,
     senderId: frame.payload.message.senderId,
     text: frame.payload.message.text ?? null,
     transportMessageId: frame.payload.message.transportMessageId,
