@@ -48,7 +48,10 @@ export function inferTargetChatType(input: string): RelayTargetScope {
   return "group";
 }
 
-export function resolveTarget(input: string): RelayResolvedTarget {
+export function resolveTarget(
+  input: string,
+  options?: { defaultChannel?: string | null }
+): RelayResolvedTarget {
   const explicit = parseExplicitTarget(input);
   if (explicit) {
     return {
@@ -70,6 +73,21 @@ export function resolveTarget(input: string): RelayResolvedTarget {
   const scope = inferTargetChatType(input);
   const normalized = normalizeTarget(input);
   const transportId = normalized.replace(/^@/, "user:");
+  const defaultChannel = options?.defaultChannel?.trim().toLowerCase() ?? "";
+  if (defaultChannel) {
+    return {
+      to: `${defaultChannel}:${transportId}`,
+      kind: scope,
+      display: `${defaultChannel}:${transportId}`,
+      conversationHandle: transportId,
+      threadHandle: null,
+      threadId: null,
+      transportTarget: {
+        channel: defaultChannel,
+        chatId: transportId,
+      },
+    };
+  }
   return {
     to: `relay:${transportId}`,
     kind: scope,

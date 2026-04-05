@@ -27,6 +27,7 @@ import {
   parseExplicitTarget,
   resolveTarget,
 } from "./target-resolution.js";
+import type { RelayCapabilitySnapshot } from "../api.js";
 
 const CHANNEL_ID = "relay-channel";
 
@@ -96,6 +97,37 @@ function mapRelayScopeToChatType(scope?: "dm" | "group" | "topic") {
 
 function normalizeThreadId(threadId: string | number | null | undefined) {
   return threadId !== undefined && threadId !== null ? String(threadId) : null;
+}
+
+function inferImplicitTargetChannel(capabilities: RelayCapabilitySnapshot | undefined): string | null {
+  const providers = new Set<string>();
+  const addProvider = (value: unknown) => {
+    if (typeof value !== "string") {
+      return;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "multi" || normalized === "relay") {
+      return;
+    }
+    providers.add(normalized);
+  };
+
+  addProvider(capabilities?.transport.provider);
+  for (const profile of Object.values(capabilities?.providerProfiles ?? {})) {
+    addProvider(profile.transport.provider);
+  }
+  for (const key of Object.keys(capabilities?.optionalCapabilities ?? {})) {
+    if (key.includes(".")) {
+      addProvider(key.split(".")[0]);
+    }
+  }
+  for (const key of Object.keys(capabilities?.providerCapabilities ?? {})) {
+    if (key.includes(".")) {
+      addProvider(key.split(".")[0]);
+    }
+  }
+
+  return providers.size === 1 ? [...providers][0] : null;
 }
 
 function countInlineButtonRows(
@@ -291,8 +323,12 @@ function readTelegramInlineButtons(
   return rows.length > 0 ? rows : undefined;
 }
 
-function resolveOutboundTarget(to: string, threadId?: string | number | null) {
-  const resolvedTarget = resolveTarget(to);
+function resolveOutboundTarget(
+  to: string,
+  threadId?: string | number | null,
+  defaultChannel?: string | null
+) {
+  const resolvedTarget = resolveTarget(to, { defaultChannel });
   const normalizedThreadId = normalizeThreadId(threadId);
   return {
     resolvedTarget,
@@ -327,6 +363,7 @@ function buildToolContextTarget(toolContext?: {
 function readMessageActionTarget(params: {
   rawParams: Record<string, unknown>;
   toolContext?: { currentChannelId?: string; currentChannelProvider?: string; currentThreadTs?: string };
+  defaultChannel?: string | null;
 }) {
   const rawTo =
     readStringParam(params.rawParams, "to") ??
@@ -352,7 +389,7 @@ function readMessageActionTarget(params: {
   }
   const threadId =
     readStringOrNumberParam(params.rawParams, "threadId") ?? params.toolContext?.currentThreadTs;
-  return resolveOutboundTarget(to, threadId ?? null);
+  return resolveOutboundTarget(to, threadId ?? null, params.defaultChannel);
 }
 
 function readActionTransportMessageId(params: {
@@ -482,6 +519,13 @@ const relayChannelBase = createChannelPluginBase<RelayResolvedAccount>({
     reply: true,
     threads: true,
     media: true,
+  },
+  agentPrompt: {
+    messageToolHints: () => [
+      "- For relay transport, keep `channel` as `relay-channel` when you specify it explicitly.",
+      "- Put the recipient into `target`, not into `channel`. Use provider-prefixed relay targets such as `telegram:123456789`, `telegram:group:-100123`, or `telegram:topic:-100123#77`.",
+      "- For inline buttons, use `action=\"send\"` and shared `buttons=[[{text, callback_data}, ...]]`. Do not use poll fields to emulate buttons.",
+    ],
   },
   reload: {
     configPrefixes: [`channels.${CHANNEL_ID}`, `plugins.entries.${CHANNEL_ID}.config`],
@@ -621,11 +665,15 @@ export const relayChannelOpenclawPlugin = {
     },
     targetResolver: {
       looksLikeId(raw, normalized) {
-        return parseExplicitTarget(normalized ?? raw) !== null;
+        return parseExplicitTarget(normalized ?? raw) !== null || Boolean(normalizeTarget(raw));
       },
-      hint: "Use explicit relay target like telegram:<conversationHandle> or telegram:group:<chatId>",
-      async resolveTarget({ input }) {
-        const resolved = resolveTarget(input);
+      hint:
+        "Set channel to relay-channel and pass the recipient through target as an explicit provider target like telegram:<chatId> or telegram:group:<chatId>.",
+      async resolveTarget({ cfg, accountId, input }) {
+        const runtime = getRuntime(cfg, accountId);
+        const resolved = resolveTarget(input, {
+          defaultChannel: inferImplicitTargetChannel(runtime.getCapabilitySnapshot()),
+        });
         return {
           to: resolved.to,
           kind: mapRelayScopeToDirectoryKind(resolved.kind),
@@ -687,6 +735,7 @@ export const relayChannelOpenclawPlugin = {
       const { target, explicitThreadId } = readMessageActionTarget({
         rawParams: params,
         toolContext,
+        defaultChannel: inferImplicitTargetChannel(runtime.getCapabilitySnapshot()),
       });
       logRuntimeEvent("info", "handleAction dispatch", {
         accountId: resolvePluginAccountId(cfg, accountId),
@@ -829,7 +878,11 @@ export const relayChannelOpenclawPlugin = {
     sendPayload: async (input: any) => {
       const { cfg, to, payload, accountId, replyToId, threadId, forceDocument } = input;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const { target, explicitThreadId } = resolveOutboundTarget(
+        to,
+        threadId ?? null,
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+      );
       const telegramChannelData =
         isRecord(payload?.channelData) && isRecord(payload.channelData.telegram)
           ? payload.channelData.telegram
@@ -877,7 +930,11 @@ export const relayChannelOpenclawPlugin = {
     },
     sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const { target, explicitThreadId } = resolveOutboundTarget(
+        to,
+        threadId ?? null,
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+      );
       const result = await runtime.sendAction({
         kind: "message.send",
         target,
@@ -891,7 +948,11 @@ export const relayChannelOpenclawPlugin = {
       const { cfg, to, text, mediaUrl, accountId, replyToId, threadId, forceDocument } = input;
       const asVoice = input.asVoice === true;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const { target, explicitThreadId } = resolveOutboundTarget(
+        to,
+        threadId ?? null,
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+      );
       if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) {
         throw new Error("MEDIA_URL_REQUIRED: relay-channel sendMedia requires mediaUrl");
       }
@@ -911,7 +972,11 @@ export const relayChannelOpenclawPlugin = {
     },
     sendPoll: async ({ cfg, to, poll, accountId, threadId, silent, isAnonymous }) => {
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const { target, explicitThreadId } = resolveOutboundTarget(
+        to,
+        threadId ?? null,
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+      );
       const result = await runtime.sendAction({
         kind: "poll.send",
         target,
@@ -940,7 +1005,9 @@ export const relayChannelOpenclawPlugin = {
     requestFileDownload: async (input: any) => {
       const { cfg, to, accountId, fileId } = input;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const resolvedTarget = resolveTarget(to);
+      const resolvedTarget = resolveTarget(to, {
+        defaultChannel: inferImplicitTargetChannel(runtime.getCapabilitySnapshot()),
+      });
       const result = await runtime.sendAction({
         kind: "file.download.request",
         target: resolvedTarget,

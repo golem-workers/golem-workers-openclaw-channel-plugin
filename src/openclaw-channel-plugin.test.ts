@@ -187,11 +187,12 @@ describe("relayChannelOpenclawPlugin", () => {
 
   it("keeps the gateway account task alive until abort", async () => {
     const port = startMockRelay();
+    const accountId = "gateway-task";
     const runtimeCfg = {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "default", url: `ws://127.0.0.1:${port}` }],
+          accounts: [{ id: accountId, url: `ws://127.0.0.1:${port}` }],
         },
       },
     };
@@ -200,8 +201,8 @@ describe("relayChannelOpenclawPlugin", () => {
 
     const task = relayChannelOpenclawPlugin.gateway!.startAccount({
       cfg: runtimeCfg as never,
-      accountId: "default",
-      account: { accountId: "default" } as never,
+      accountId,
+      account: { accountId } as never,
       abortSignal: controller.signal,
     } as never);
     task.finally(() => {
@@ -218,18 +219,18 @@ describe("relayChannelOpenclawPlugin", () => {
     expect(
       relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
         cfg: runtimeCfg as never,
-        account: { accountId: "default" } as never,
+        account: { accountId } as never,
       } as never)
     ).toMatchObject({
-      accountId: "default",
+      accountId,
       running: true,
       healthState: "healthy",
     });
 
     await relayChannelOpenclawPlugin.gateway!.stopAccount({
       cfg: runtimeCfg as never,
-      accountId: "default",
-      account: { accountId: "default" } as never,
+      accountId,
+      account: { accountId } as never,
     } as never);
   });
 
@@ -431,6 +432,83 @@ describe("relayChannelOpenclawPlugin", () => {
       cfg: runtimeCfg as never,
       accountId: "shared-buttons-raw",
       account: { accountId: "shared-buttons-raw" } as never,
+    } as never);
+  });
+
+  it("normalizes plain targets to the inferred provider before relay send", async () => {
+    const seenActions: Array<{
+      kind: string;
+      payload: Record<string, unknown>;
+      transportTarget?: { channel?: string; chatId?: string };
+    }> = [];
+    const port = startMockRelay({
+      optionalCapabilities: {
+        "telegram.inlineButtons": true,
+      },
+      onAction(frame, ws) {
+        seenActions.push({
+          kind: frame.action.kind,
+          payload: frame.action.payload,
+          transportTarget: frame.action.transportTarget,
+        });
+        ws.send(
+          JSON.stringify({
+            type: "event",
+            eventType: "transport.action.completed",
+            payload: {
+              requestId: frame.requestId,
+              actionId: frame.action.actionId,
+              result: {
+                transportMessageId: "msg-implicit",
+                conversationId: "telegram:7278830001",
+              },
+            },
+          })
+        );
+      },
+    });
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          accounts: [{ id: "implicit-targets", url: `ws://127.0.0.1:${port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
+      cfg: runtimeCfg as never,
+      accountId: "implicit-targets",
+      account: { accountId: "implicit-targets" } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, "implicit-targets");
+
+    await relayChannelOpenclawPlugin.outbound!.sendText?.({
+      cfg: runtimeCfg as never,
+      to: "7278830001",
+      text: "hello",
+      accountId: "implicit-targets",
+    } as never);
+
+    expect(seenActions[0]).toMatchObject({
+      kind: "message.send",
+      payload: {
+        text: "hello",
+      },
+      transportTarget: {
+        channel: "telegram",
+        chatId: "7278830001",
+      },
+    });
+
+    controller.abort();
+    await startTask;
+    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+      cfg: runtimeCfg as never,
+      accountId: "implicit-targets",
+      account: { accountId: "implicit-targets" } as never,
     } as never);
   });
 
