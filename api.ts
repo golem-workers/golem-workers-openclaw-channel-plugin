@@ -187,6 +187,8 @@ export type RelayApprovalResult = {
 
 export type RelayMessageToolDescription = {
   actions: string[];
+  capabilities?: string[];
+  schema?: JsonValue[] | null;
 };
 
 export type RelayInboundMessageEvent = {

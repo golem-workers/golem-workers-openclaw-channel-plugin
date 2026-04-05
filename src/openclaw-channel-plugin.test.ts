@@ -289,6 +289,15 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
     expect(description).toMatchObject({
       capabilities: ["interactive", "buttons"],
+      schema: [
+        {
+          properties: {
+            buttons: {
+              type: "array",
+            },
+          },
+        },
+      ],
     });
 
     await relayChannelOpenclawPlugin.outbound!.sendPayload?.({

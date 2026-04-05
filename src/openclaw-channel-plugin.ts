@@ -574,17 +574,14 @@ export const relayChannelOpenclawPlugin = {
       const snapshot = runtime.getCapabilitySnapshot();
       const discovery = describeMessageTool(snapshot);
       const actionAllowlist = new Set(["send", "poll", "react", "edit", "delete", "pin"]);
-      const capabilities = new Set<string>();
-      if (
-        snapshot?.optionalCapabilities["telegram.inlineButtons"] ||
-        snapshot?.providerCapabilities["telegram.inlineButtons"]
-      ) {
-        capabilities.add("interactive");
-        capabilities.add("buttons");
-      }
       return {
         actions: discovery.actions.filter((action) => actionAllowlist.has(action)),
-        capabilities: Array.from(capabilities),
+        ...(Array.isArray(discovery.capabilities) && discovery.capabilities.length > 0
+          ? { capabilities: discovery.capabilities }
+          : {}),
+        ...(Array.isArray(discovery.schema) && discovery.schema.length > 0
+          ? { schema: discovery.schema }
+          : {}),
       };
     },
     supportsAction({ action }) {
