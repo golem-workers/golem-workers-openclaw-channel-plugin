@@ -223,12 +223,49 @@ function resolveOutboundTarget(to: string, threadId?: string | number | null) {
   };
 }
 
+function isInternalMessageTarget(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "gateway-client" || normalized === "webchat" || normalized === "default";
+}
+
+function buildToolContextTarget(toolContext?: {
+  currentChannelId?: string;
+  currentChannelProvider?: string;
+}): string {
+  const currentChannelId = toolContext?.currentChannelId?.trim() ?? "";
+  if (!currentChannelId) {
+    return "";
+  }
+  const currentChannelProvider = toolContext?.currentChannelProvider?.trim() ?? "";
+  if (currentChannelProvider && !currentChannelId.includes(":")) {
+    return `${currentChannelProvider}:${currentChannelId}`;
+  }
+  return currentChannelId;
+}
+
 function readMessageActionTarget(params: {
   rawParams: Record<string, unknown>;
-  toolContext?: { currentChannelId?: string; currentThreadTs?: string };
+  toolContext?: { currentChannelId?: string; currentChannelProvider?: string; currentThreadTs?: string };
 }) {
+  const rawTo =
+    readStringParam(params.rawParams, "to") ??
+    readStringParam(params.rawParams, "target") ??
+    readStringParam(params.rawParams, "channelId") ??
+    readStringParam(params.rawParams, "targetId");
+  const rawChannel = readStringParam(params.rawParams, "channel");
+  const contextualTarget = buildToolContextTarget(params.toolContext);
   const to =
-    readStringParam(params.rawParams, "to") ?? params.toolContext?.currentChannelId?.trim() ?? "";
+    (rawTo && rawTo.includes(":")
+      ? rawTo
+      : rawChannel && contextualTarget
+        ? contextualTarget.includes(":")
+          ? contextualTarget
+          : `${rawChannel}:${contextualTarget}`
+        : rawTo && rawChannel && !isInternalMessageTarget(rawTo)
+          ? `${rawChannel}:${rawTo}`
+          : rawTo && !isInternalMessageTarget(rawTo)
+            ? rawTo
+            : contextualTarget) ?? "";
   if (!to) {
     throw new Error("Target is required. Provide `to` explicitly or invoke the action from a conversation context.");
   }

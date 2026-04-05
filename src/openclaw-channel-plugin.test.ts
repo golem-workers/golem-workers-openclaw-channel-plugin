@@ -45,6 +45,7 @@ function startMockRelay(options?: {
         actionId: string;
         kind: string;
         payload: Record<string, unknown>;
+        transportTarget?: { channel?: string; chatId?: string };
       };
     },
     ws: Parameters<NonNullable<WebSocketServer["clients"]["values"]>["next"]>[0]
@@ -59,7 +60,12 @@ function startMockRelay(options?: {
         accountId?: string;
         requestType?: string;
         requestId?: string;
-        action?: { actionId?: string; kind?: string; payload?: Record<string, unknown> };
+        action?: {
+          actionId?: string;
+          kind?: string;
+          payload?: Record<string, unknown>;
+          transportTarget?: { channel?: string; chatId?: string };
+        };
       };
       if (frame.type === "hello") {
         ws.send(
@@ -104,6 +110,7 @@ function startMockRelay(options?: {
               actionId: string;
               kind: string;
               payload: Record<string, unknown>;
+              transportTarget?: { channel?: string; chatId?: string };
             };
           },
           ws
@@ -227,7 +234,11 @@ describe("relayChannelOpenclawPlugin", () => {
   });
 
   it("routes interactive send payloads through relay message.send with replyMarkup", async () => {
-    const seenActions: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const seenActions: Array<{
+      kind: string;
+      payload: Record<string, unknown>;
+      transportTarget?: { channel?: string; chatId?: string };
+    }> = [];
     const port = startMockRelay({
       optionalCapabilities: {
         "telegram.inlineButtons": true,
@@ -236,6 +247,7 @@ describe("relayChannelOpenclawPlugin", () => {
         seenActions.push({
           kind: frame.action.kind,
           payload: frame.action.payload,
+          transportTarget: frame.action.transportTarget,
         });
         ws.send(
           JSON.stringify({
@@ -375,11 +387,16 @@ describe("relayChannelOpenclawPlugin", () => {
       action: "poll",
       cfg: runtimeCfg as never,
       params: {
-        to: "telegram:123",
+        target: "gateway-client",
+        channel: "telegram",
         pollQuestion: "Gateway poll?",
         pollOption: ["yes", "no"],
       },
       accountId: "actions",
+      toolContext: {
+        currentChannelId: "123",
+        currentChannelProvider: "telegram",
+      },
     } as never);
     await relayChannelOpenclawPlugin.actions!.handleAction?.({
       channel: "relay-channel",
