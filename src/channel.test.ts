@@ -106,9 +106,9 @@ function startMockRelay(options: MockRelayOptions = {}) {
     port: address.port,
     seenActions,
     getConnectionCount: () => connectionCount,
-    closeConnection() {
+    closeConnection(code?: number, reason?: string) {
       for (const client of wss.clients) {
-        client.close();
+        client.close(code, reason);
       }
     },
     reopenHealthy() {
@@ -298,15 +298,29 @@ describe("relay channel plugin", () => {
     });
 
     await plugin.gateway.startAccount("default");
-    relay.closeConnection();
+    relay.closeConnection(1012, "relay reboot");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(plugin.status.getAccountStatus("default").state).toBe("degraded");
+    expect(plugin.status.getAccountStatus("default")).toMatchObject({
+      state: "degraded",
+      recovering: true,
+      reconnectScheduled: true,
+      lastCloseCode: 1012,
+      lastCloseReason: "relay reboot",
+    });
+
+    await plugin.gateway.startAccount("default");
+    expect(relay.getConnectionCount()).toBe(1);
 
     await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(plugin.status.getAccountStatus("default").state).toBe("healthy");
+    expect(plugin.status.getAccountStatus("default")).toMatchObject({
+      state: "healthy",
+      recovering: false,
+      reconnectScheduled: false,
+    });
+    expect(relay.getConnectionCount()).toBe(2);
   });
 
-  it("degrades instead of crashing when relay is unavailable at startup", async () => {
+  it("degrades into self-recovery when relay is unavailable at startup", async () => {
     const port = await reservePort();
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
@@ -319,12 +333,19 @@ describe("relay channel plugin", () => {
     const startResult = await plugin.gateway.startAccount("default");
     expect(startResult.status).toMatchObject({
       state: "degraded",
+      recovering: true,
+      reconnectScheduled: true,
+      nextReconnectInMs: 50,
     });
 
     const relay = startMockRelay({ port });
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(plugin.status.getAccountStatus("default").state).toBe("healthy");
-    expect(relay.getConnectionCount()).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    expect(plugin.status.getAccountStatus("default")).toMatchObject({
+      state: "healthy",
+      recovering: false,
+      reconnectScheduled: false,
+    });
+    expect(relay.getConnectionCount()).toBe(1);
   });
 
   it("maps inbound text messages into canonical conversation routing", async () => {
@@ -582,6 +603,12 @@ describe("relay channel plugin", () => {
     await expect(plugin.gateway.startAccount("default")).rejects.toThrow(
       /CAPABILITY_MISSING/
     );
+    expect(plugin.status.getAccountStatus("default")).toMatchObject({
+      state: "degraded",
+      recovering: false,
+      reconnectScheduled: false,
+      reason: expect.stringMatching(/CAPABILITY_MISSING/),
+    });
   });
 
   it("allows baseline messaging when optional capabilities are absent", async () => {

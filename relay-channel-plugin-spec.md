@@ -385,6 +385,10 @@ Required behavior:
   account states
 - transient relay unavailability should mark the account degraded instead of
   pretending the channel is healthy
+- `stopped` must mean explicit teardown only; socket loss and recoverable startup
+  failures must not masquerade as a stop
+- degraded snapshots must expose whether the runtime is still recovering
+  in-process (`recovering`, `reconnectScheduled`, `nextReconnectInMs`)
 - capability snapshots must refresh after reconnect
 - plugin-owned message-tool action discovery must re-read current capabilities
   instead of caching stale results indefinitely
@@ -406,6 +410,10 @@ Recommended plugin behavior:
 - connect on account runtime startup
 - back off on reconnect with bounded exponential retry
 - surface degraded account status when the relay is unavailable
+- keep reconnect ownership inside the plugin runtime rather than delegating it to
+  an outer supervisor
+- emit close code or reason and reconnect timer metadata so operators can
+  distinguish relay restarts from fatal contract failures
 - restore subscriptions and capability snapshots after reconnect
 
 ## Relay Wire Protocol
@@ -1138,11 +1146,25 @@ type RelayCapabilitySnapshot = {
   };
 };
 
+type RelayRecoveryState = {
+  recovering: boolean;
+  reconnectScheduled: boolean;
+  reconnectAttempts: number;
+  nextReconnectInMs: number | null;
+  lastDisconnectReason: string | null;
+  lastCloseCode: number | null;
+  lastCloseReason: string | null;
+};
+
 type RelayAccountStatus =
-  | { state: "connecting" }
-  | { state: "healthy"; capabilities: RelayCapabilitySnapshot }
-  | { state: "degraded"; reason: string; capabilities?: RelayCapabilitySnapshot }
-  | { state: "stopped" };
+  | ({ state: "connecting" } & RelayRecoveryState)
+  | ({ state: "healthy"; capabilities: RelayCapabilitySnapshot } & RelayRecoveryState)
+  | ({
+      state: "degraded";
+      reason: string;
+      capabilities?: RelayCapabilitySnapshot;
+    } & RelayRecoveryState)
+  | ({ state: "stopped" } & RelayRecoveryState);
 
 type RelaySessionConversation = {
   id: string;

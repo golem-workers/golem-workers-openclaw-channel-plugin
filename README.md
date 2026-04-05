@@ -21,6 +21,7 @@ focused contract tests.
   typing behavior to OpenClaw
 - transport-level event decoding for delivery receipts and typing updates
 - reconnect and duplicate-terminal-event handling tests
+- recovery-aware account status snapshots with reconnect diagnostics
 
 ## Project structure
 
@@ -67,6 +68,14 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 - spec: `relay-channel-plugin-spec.md`
 - implementation plan: `docs/relay-channel-plugin-implementation-plan.md`
+
+## Runtime semantics
+
+- transient websocket loss moves an account into `degraded`, not `stopped`
+- `stopped` is reserved for explicit teardown such as `stopAccount(...)`
+- reconnect ownership stays inside the plugin runtime
+- account snapshots expose `recovering`, `reconnectScheduled`, close metadata, and
+  next backoff timing for supervisors and diagnostics
 
 ## Current limitations
 

@@ -4,6 +4,7 @@ import type {
   RelayAccountStatus,
   RelayCapabilitySnapshot,
   RelayChannelPluginConfig,
+  RelayRecoveryState,
   RelayResolvedTarget,
   RelayTransportEvent,
 } from "../api.js";
@@ -44,25 +45,38 @@ export class RelayAccountRuntime {
       if (status.state === "healthy") {
         logRuntimeEvent("info", "Relay account runtime healthy", {
           accountId: this.accountId,
+          recovering: status.recovering,
         });
-        this.statusRegistry.setHealthy(this.accountId, status.capabilities);
+        this.statusRegistry.setHealthy(
+          this.accountId,
+          status.capabilities,
+          pickRecoveryState(status)
+        );
       } else if (status.state === "connecting") {
         logRuntimeEvent("info", "Relay account runtime connecting", {
           accountId: this.accountId,
+          recovering: status.recovering,
+          reconnectScheduled: status.reconnectScheduled,
         });
-        this.statusRegistry.setConnecting(this.accountId);
+        this.statusRegistry.setConnecting(this.accountId, pickRecoveryState(status));
       } else if (status.state === "degraded") {
         logRuntimeEvent("warn", "Relay account runtime degraded", {
           accountId: this.accountId,
           reason: status.reason,
+          recovering: status.recovering,
+          reconnectScheduled: status.reconnectScheduled,
+          nextReconnectInMs: status.nextReconnectInMs,
+          lastCloseCode: status.lastCloseCode,
+          lastCloseReason: status.lastCloseReason,
         });
         this.statusRegistry.setDegraded(
           this.accountId,
           status.reason,
-          status.capabilities
+          status.capabilities,
+          pickRecoveryState(status)
         );
       } else {
-        this.statusRegistry.setStopped(this.accountId);
+        this.statusRegistry.setStopped(this.accountId, pickRecoveryState(status));
       }
     });
 
@@ -76,7 +90,11 @@ export class RelayAccountRuntime {
     });
 
     client.on("capabilities", (snapshot: RelayCapabilitySnapshot) => {
-      this.statusRegistry.setHealthy(this.accountId, snapshot);
+      this.statusRegistry.setHealthy(
+        this.accountId,
+        snapshot,
+        pickRecoveryState(this.statusRegistry.get(this.accountId))
+      );
     });
 
     client.on("protocolError", (error) => {
@@ -87,24 +105,27 @@ export class RelayAccountRuntime {
     });
 
     this.client = client;
-    this.statusRegistry.setConnecting(this.accountId);
+    this.statusRegistry.setConnecting(this.accountId, {
+      recovering: false,
+      reconnectScheduled: false,
+      nextReconnectInMs: null,
+    });
     try {
       await client.start();
     } catch (error) {
-      if (isFatalRelayStartupError(error)) {
-        this.client = null;
-        throw error;
-      }
-      logRuntimeEvent("warn", "Relay account runtime entered degraded startup mode", {
-        accountId: this.accountId,
-        reason: error instanceof Error ? error.message : "Relay connection failed",
-      });
+      this.client = null;
+      const reason = error instanceof Error ? error.message : "Relay connection failed";
       this.statusRegistry.setDegraded(
         this.accountId,
-        error instanceof Error ? error.message : "Relay connection failed",
-        client.getCapabilitySnapshot()
+        reason,
+        client.getCapabilitySnapshot(),
+        {
+          recovering: false,
+          reconnectScheduled: false,
+          nextReconnectInMs: null,
+        }
       );
-      return this.statusRegistry.get(this.accountId);
+      throw error;
     }
     return this.statusRegistry.get(this.accountId);
   }
@@ -180,7 +201,14 @@ export class RelayAccountRuntime {
   }
 }
 
-function isFatalRelayStartupError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /^CAPABILITY_MISSING:/u.test(message);
+function pickRecoveryState(status: RelayAccountStatus): Partial<RelayRecoveryState> {
+  return {
+    recovering: status.recovering,
+    reconnectScheduled: status.reconnectScheduled,
+    reconnectAttempts: status.reconnectAttempts,
+    nextReconnectInMs: status.nextReconnectInMs,
+    lastDisconnectReason: status.lastDisconnectReason,
+    lastCloseCode: status.lastCloseCode,
+    lastCloseReason: status.lastCloseReason,
+  };
 }

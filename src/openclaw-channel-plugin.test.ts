@@ -51,9 +51,11 @@ function startMockRelay(options?: {
     ws: Parameters<NonNullable<WebSocketServer["clients"]["values"]>["next"]>[0]
   ) => void;
 }) {
+  let connectionCount = 0;
   const wss = new WebSocketServer({ port: 0 });
   servers.push(wss);
   wss.on("connection", (ws) => {
+    connectionCount += 1;
     ws.on("message", (raw) => {
       const frame = JSON.parse(raw.toString()) as {
         type?: string;
@@ -123,7 +125,15 @@ function startMockRelay(options?: {
   if (!address || typeof address === "string") {
     throw new Error("Failed to get mock relay address");
   }
-  return address.port;
+  return {
+    port: address.port,
+    getConnectionCount: () => connectionCount,
+    closeConnection(code?: number, reason?: string) {
+      for (const client of wss.clients) {
+        client.close(code, reason);
+      }
+    },
+  };
 }
 
 async function waitForHealthy(cfg: typeof cfg | Record<string, unknown>, accountId = "default") {
@@ -186,13 +196,13 @@ describe("relayChannelOpenclawPlugin", () => {
   });
 
   it("keeps the gateway account task alive until abort", async () => {
-    const port = startMockRelay();
+    const relay = startMockRelay();
     const accountId = "gateway-task";
     const runtimeCfg = {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: accountId, url: `ws://127.0.0.1:${port}` }],
+          accounts: [{ id: accountId, url: `ws://127.0.0.1:${relay.port}` }],
         },
       },
     };
@@ -225,8 +235,61 @@ describe("relayChannelOpenclawPlugin", () => {
       accountId,
       running: true,
       healthState: "healthy",
+      recovering: false,
+      reconnectScheduled: false,
     });
 
+    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+      cfg: runtimeCfg as never,
+      accountId,
+      account: { accountId } as never,
+    } as never);
+  });
+
+  it("keeps degraded relay runtimes running in account snapshots while reconnect is scheduled", async () => {
+    const relay = startMockRelay();
+    const accountId = "degraded-snapshot";
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          reconnectBackoffMs: 80,
+          maxReconnectBackoffMs: 100,
+          accounts: [{ id: accountId, url: `ws://127.0.0.1:${relay.port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
+      cfg: runtimeCfg as never,
+      accountId,
+      account: { accountId } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, accountId);
+    relay.closeConnection(1012, "relay reboot");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(
+      relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
+        cfg: runtimeCfg as never,
+        account: { accountId } as never,
+      } as never)
+    ).toMatchObject({
+      accountId,
+      running: true,
+      connected: false,
+      healthState: "degraded",
+      recovering: true,
+      reconnectScheduled: true,
+      lastCloseCode: 1012,
+      lastCloseReason: "relay reboot",
+    });
+    expect(relay.getConnectionCount()).toBe(1);
+
+    controller.abort();
+    await startTask;
     await relayChannelOpenclawPlugin.gateway!.stopAccount({
       cfg: runtimeCfg as never,
       accountId,
@@ -240,7 +303,7 @@ describe("relayChannelOpenclawPlugin", () => {
       payload: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
-    const port = startMockRelay({
+    const relay = startMockRelay({
       onAction(frame, ws) {
         seenActions.push({
           kind: frame.action.kind,
@@ -267,7 +330,7 @@ describe("relayChannelOpenclawPlugin", () => {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "send-action", url: `ws://127.0.0.1:${port}` }],
+          accounts: [{ id: "send-action", url: `ws://127.0.0.1:${relay.port}` }],
         },
       },
     };
@@ -325,7 +388,7 @@ describe("relayChannelOpenclawPlugin", () => {
       payload: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
-    const port = startMockRelay({
+    const relay = startMockRelay({
       onAction(frame, ws) {
         seenActions.push({
           kind: frame.action.kind,
@@ -352,7 +415,7 @@ describe("relayChannelOpenclawPlugin", () => {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "implicit-targets", url: `ws://127.0.0.1:${port}` }],
+          accounts: [{ id: "implicit-targets", url: `ws://127.0.0.1:${relay.port}` }],
         },
       },
     };

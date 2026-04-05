@@ -42,11 +42,25 @@ export type RelayCapabilitySnapshot = {
   };
 };
 
+export type RelayRecoveryState = {
+  recovering: boolean;
+  reconnectScheduled: boolean;
+  reconnectAttempts: number;
+  nextReconnectInMs: number | null;
+  lastDisconnectReason: string | null;
+  lastCloseCode: number | null;
+  lastCloseReason: string | null;
+};
+
 export type RelayAccountStatus =
-  | { state: "connecting" }
-  | { state: "healthy"; capabilities: RelayCapabilitySnapshot }
-  | { state: "degraded"; reason: string; capabilities?: RelayCapabilitySnapshot }
-  | { state: "stopped" };
+  | ({ state: "connecting" } & RelayRecoveryState)
+  | ({ state: "healthy"; capabilities: RelayCapabilitySnapshot } & RelayRecoveryState)
+  | ({
+      state: "degraded";
+      reason: string;
+      capabilities?: RelayCapabilitySnapshot;
+    } & RelayRecoveryState)
+  | ({ state: "stopped" } & RelayRecoveryState);
 
 export type RelaySessionConversation = {
   id: string;

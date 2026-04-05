@@ -322,7 +322,14 @@ function formatAccountSnapshot(cfg: OpenClawConfig, accountId?: string | null) {
     running: status.state !== "stopped",
     connected: status.state === "healthy",
     healthState: status.state,
+    recovering: status.recovering,
+    reconnectScheduled: status.reconnectScheduled,
+    reconnectAttempts: status.reconnectAttempts,
+    nextReconnectInMs: status.nextReconnectInMs,
     lastError: status.state === "degraded" ? status.reason : null,
+    lastDisconnectReason: status.lastDisconnectReason,
+    lastCloseCode: status.lastCloseCode,
+    lastCloseReason: status.lastCloseReason,
   };
 }
 
