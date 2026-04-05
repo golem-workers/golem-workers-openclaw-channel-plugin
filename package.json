@@ -27,6 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "ajv": "^8.18.0",
     "openclaw": "^2026.3.24",
     "ws": "^8.18.3",
     "zod": "^4.3.6"
