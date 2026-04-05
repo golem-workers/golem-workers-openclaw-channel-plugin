@@ -13,6 +13,7 @@ export const REQUIRED_CORE_CAPABILITIES = [
 ] as const;
 
 export const OPTIONAL_CAPABILITY_TO_ACTION: Record<string, string> = {
+  typing: "typing",
   fileDownloads: "download",
   nativeApprovalDelivery: "approval_native_delivery",
 };

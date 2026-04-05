@@ -522,7 +522,7 @@ export const relayChannelOpenclawPlugin = {
       const runtime = getRuntime(cfg, accountId);
       const snapshot = runtime.getCapabilitySnapshot();
       const discovery = describeMessageTool(snapshot);
-      const actionAllowlist = new Set(["send"]);
+      const actionAllowlist = new Set(["send", "typing"]);
       logRuntimeEvent("info", "describeMessageTool resolved", {
         accountId: resolvePluginAccountId(cfg, accountId),
         transportProvider: snapshot?.transport.provider ?? null,
@@ -548,9 +548,10 @@ export const relayChannelOpenclawPlugin = {
       };
     },
     supportsAction({ action }) {
-      return action === "send";
+      return ["send", "typing"].includes(String(action));
     },
     async handleAction({ action, params, cfg, accountId, toolContext }) {
+      const requestedAction = String(action);
       const runtime = await ensureRuntimeStarted(cfg, accountId);
       const { target, explicitThreadId } = readMessageActionTarget({
         rawParams: params,
@@ -559,13 +560,13 @@ export const relayChannelOpenclawPlugin = {
       });
       logRuntimeEvent("info", "handleAction dispatch", {
         accountId: resolvePluginAccountId(cfg, accountId),
-        action,
+        action: requestedAction,
         target: summarizeResolvedTarget(target),
         explicitThreadId: explicitThreadId ?? null,
         params: summarizeMessageActionParams(params),
       });
 
-      if (action === "send") {
+      if (requestedAction === "send") {
         const text =
           readStringParam(params, "message") ??
           readStringParam(params, "content") ??
@@ -612,7 +613,26 @@ export const relayChannelOpenclawPlugin = {
         });
       }
 
-      throw new Error(`Unsupported relay-channel action: ${action}`);
+      if (requestedAction === "typing") {
+        const result = await runtime.sendAction({
+          kind: "typing.set",
+          target,
+          payload: {
+            ...(readBooleanParam(params, "enabled") !== undefined
+              ? { enabled: readBooleanParam(params, "enabled") === true }
+              : {}),
+            ...(readStringParam(params, "chatAction") ? { chatAction: readStringParam(params, "chatAction") } : {}),
+          },
+          explicitThreadId,
+        });
+        return jsonResult({
+          ok: true,
+          messageId: result.transportMessageId ?? "",
+          conversationId: result.conversationId,
+        });
+      }
+
+      throw new Error(`Unsupported relay-channel action: ${requestedAction}`);
     },
   },
   outbound: {

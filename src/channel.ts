@@ -166,6 +166,18 @@ export function createRelayChannelPlugin(
           idempotencyKey: input.idempotencyKey,
         });
       },
+      async setTyping(input) {
+        const runtime = getRuntime(input.accountId);
+        return await runtime.sendAction({
+          kind: "typing.set",
+          target: input.target,
+          payload: {
+            ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+            ...(input.chatAction ? { chatAction: input.chatAction } : {}),
+          },
+          idempotencyKey: input.idempotencyKey,
+        });
+      },
       async requestFileDownload(input) {
         const runtime = getRuntime(input.accountId);
         return await runtime.sendAction({

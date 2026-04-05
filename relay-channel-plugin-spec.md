@@ -251,8 +251,8 @@ Required OpenClaw-facing surfaces:
 - `threading`: reply mode, auto-thread selection, and transport reply behavior
 - `actions.describeMessageTool(...)`: advertise shared `message` tool actions
   from negotiated capabilities
-- `outbound`: translate OpenClaw sends and file-download requests into relay
-  actions
+- `outbound`: translate OpenClaw sends, typing, and file-download requests into
+  relay actions
 - `directory` and target resolution helpers: user-facing lookup, explicit
   targets, display formatting, and fallback target resolution
 
@@ -294,6 +294,7 @@ These capabilities are expected for a useful v1 relay-backed channel:
 
 These capabilities are additive and must be negotiated explicitly:
 
+- typing or chat actions
 - file download requests
 - live directory lookup
 - native approval delivery helpers
@@ -457,7 +458,7 @@ The plugin dials the relay and sends a client hello:
       "replyTo",
       "threadRouting"
     ],
-    "optional": ["fileDownloads"]
+    "optional": ["typing", "fileDownloads"]
   }
 }
 ```
@@ -482,6 +483,7 @@ The relay responds:
     "threadRouting": true
   },
   "optionalCapabilities": {
+    "typing": true,
     "fileDownloads": true
   },
   "providerCapabilities": {},
@@ -490,7 +492,14 @@ The relay responds:
     "maxCaptionBytes": 4096,
     "maxPollOptions": 10
   },
-  "targetCapabilities": {},
+  "targetCapabilities": {
+    "dm": {
+      "typing": true
+    },
+    "group": {
+      "typing": true
+    }
+  },
   "dataPlane": {
     "uploadBaseUrl": "http://127.0.0.1:43129/uploads",
     "downloadBaseUrl": "http://127.0.0.1:43129/downloads"
@@ -528,6 +537,7 @@ The plugin turns OpenClaw outbound operations into relay actions.
 Base action categories:
 
 - `message.send`
+- `typing.set`
 - `file.download.request`
 
 Each action carries:
@@ -665,6 +675,7 @@ Core inbound event families:
 
 - `transport.message.received`
 - `transport.delivery.receipt`
+- `transport.typing.updated`
 - `transport.capabilities.updated`
 - `transport.account.status`
 
@@ -875,8 +886,9 @@ This avoids forcing every inbound event to carry raw file bytes.
 
 ## Transport Scope
 
-This trimmed plugin surface intentionally keeps only baseline send/receive flows,
-file-download requests, and delivery-receipt transport events.
+This trimmed plugin surface intentionally keeps baseline send/receive flows,
+capability-gated typing, file-download requests, and delivery-receipt transport
+events.
 
 ## State Ownership
 
@@ -1328,7 +1340,8 @@ Minimum v1 conformance should be tracked per account and per target scope.
 | Replay and reconnect | Yes | Cursor restore and explicit gap handling |
 | File data plane | Yes | Local upload and download architecture |
 | Edits and deletes | Trimmed from plugin surface | Not part of current plugin contract |
-| Reactions and typing | Trimmed from plugin surface | Not part of current plugin contract |
+| Reactions | Trimmed from plugin surface | Not part of current plugin contract |
+| Typing | Capability-gated | Part of current plugin contract |
 | Pin and unpin | Trimmed from plugin surface | Not part of current plugin contract |
 
 ## Acceptance Criteria For V1

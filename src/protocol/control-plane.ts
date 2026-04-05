@@ -91,7 +91,7 @@ export const transportTargetSchema = z.record(z.string(), z.string());
 
 export const transportActionSchema = z.object({
   actionId: z.string(),
-  kind: z.enum(["message.send", "file.download.request"]),
+  kind: z.enum(["message.send", "typing.set", "file.download.request"]),
   idempotencyKey: z.string(),
   accountId: z.string(),
   targetScope: z.enum(["dm", "group", "topic"]).optional(),
@@ -227,6 +227,36 @@ export const transportDeliveryReceiptEventSchema = z.object({
   }),
 });
 
+const transportConversationPayloadSchema = z.object({
+  eventId: z.string(),
+  accountId: z.string(),
+  cursor: z.string().optional(),
+  targetScope: z.enum(["dm", "group", "topic"]).optional(),
+  conversation: z.object({
+    handle: z.string().optional(),
+    transportConversationId: z.string().optional(),
+    baseConversationId: z.string().optional(),
+    parentConversationCandidates: z.array(z.string()).optional(),
+  }),
+  thread: z
+    .object({
+      handle: z.string().optional(),
+      threadId: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const transportTypingUpdatedEventSchema = z.object({
+  type: z.literal("event"),
+  eventType: z.literal("transport.typing.updated"),
+  payload: transportConversationPayloadSchema.extend({
+    typing: z.object({
+      senderId: z.string().optional(),
+      active: z.boolean(),
+    }),
+  }),
+});
+
 export const transportAccountStatusEventSchema = z.object({
   type: z.literal("event"),
   eventType: z.enum([
@@ -265,6 +295,7 @@ export const controlPlaneEventSchema = z.union([
   transportActionFailedEventSchema,
   transportMessageReceivedEventSchema,
   transportDeliveryReceiptEventSchema,
+  transportTypingUpdatedEventSchema,
   transportAccountStatusEventSchema,
   transportCapabilitiesUpdatedEventSchema,
   protocolErrorSchema,

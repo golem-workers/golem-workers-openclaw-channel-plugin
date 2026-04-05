@@ -513,12 +513,17 @@ describe("relay channel plugin", () => {
     expect(download.downloadUrl).toBe("http://127.0.0.1:43129/downloads/download-1");
   });
 
-  it("describes only remaining optional message-tool actions", async () => {
+  it("describes typing and remaining optional message-tool actions", async () => {
     const relay = startMockRelay({
       capabilities: {
         optionalCapabilities: {
+          typing: true,
           fileDownloads: true,
           nativeApprovalDelivery: true,
+        },
+        targetCapabilities: {
+          dm: { typing: false },
+          group: { typing: true },
         },
       },
     });
@@ -530,8 +535,14 @@ describe("relay channel plugin", () => {
     });
     await plugin.gateway.startAccount("default");
 
+    expect(plugin.actions.describeMessageTool("default", "dm").actions).toEqual([
+      "send",
+      "download",
+      "approval_native_delivery",
+    ]);
     expect(plugin.actions.describeMessageTool("default", "group").actions).toEqual([
       "send",
+      "typing",
       "download",
       "approval_native_delivery",
     ]);
@@ -616,11 +627,16 @@ describe("relay channel plugin", () => {
           ws.send(
             JSON.stringify({
               type: "event",
-              eventType: "transport.delivery.receipt",
+              eventType: "transport.typing.updated",
               payload: {
+                eventId: "evt-2",
                 accountId: "default",
-                transportMessageId: "2002",
-                status: "delivered",
+                conversation: {
+                  handle: "-100123",
+                },
+                typing: {
+                  active: true,
+                },
               },
             })
           );
@@ -639,7 +655,7 @@ describe("relay channel plugin", () => {
 
     await plugin.gateway.startAccount("default");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(seenEvents).toEqual([{ eventType: "transport.delivery.receipt" }]);
+    expect(seenEvents).toEqual([{ eventType: "transport.typing.updated" }]);
   });
 
   it("keeps security and approvals plugin-owned", async () => {

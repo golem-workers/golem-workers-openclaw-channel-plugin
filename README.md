@@ -16,10 +16,10 @@ focused contract tests.
 - account-scoped runtime registry and WebSocket relay client
 - canonical target resolution, session routing, outbound route building, and
   stateless handle-based routing helpers
-- outbound text/media send plus file-download request actions
-- shared `message` tool action discovery currently exposes send-only behavior to
-  OpenClaw
-- transport-level event decoding for delivery receipts
+- outbound text/media send plus typing and file-download request actions
+- shared `message` tool action discovery exposes send plus capability-gated
+  typing behavior to OpenClaw
+- transport-level event decoding for delivery receipts and typing updates
 - reconnect and duplicate-terminal-event handling tests
 
 ## Project structure
@@ -86,8 +86,9 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
   OpenClaw runtime invokes directly
 - backend-originated transport events flow through the existing relay push
   ingress as `transport_event`; for Telegram Bot API in this stack, backend
-  remains the owner of polling/webhook ingestion and can forward normalized
-  delivery receipts to the plugin through relay
+  remains the owner of polling/webhook ingestion and secret-dependent Telegram
+  transport execution, and can forward normalized delivery receipts to the
+  plugin through relay without exposing bot tokens on the agent side
 
 ## Deploy To Agent
 

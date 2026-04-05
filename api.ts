@@ -71,6 +71,7 @@ export type RelayResolvedTarget = {
 
 export type RelayActionKind =
   | "message.send"
+  | "typing.set"
   | "file.download.request";
 
 export type RelayActionPayload = {
@@ -193,7 +194,7 @@ export type RelayInboundMessageEvent = {
 
 export type RelayTransportEvent = {
   type: "event";
-  eventType: "transport.delivery.receipt";
+  eventType: "transport.delivery.receipt" | "transport.typing.updated";
   payload: Record<string, JsonValue>;
 };
 
@@ -276,6 +277,13 @@ export type ChatChannelPlugin = {
       forceDocument?: boolean;
       replyToTransportMessageId?: string | null;
       sessionKey?: string;
+      idempotencyKey?: string;
+    }): Promise<RelayActionSuccess>;
+    setTyping(input: {
+      accountId: string;
+      target: RelayResolvedTarget;
+      enabled?: boolean;
+      chatAction?: string;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
     requestFileDownload(input: {

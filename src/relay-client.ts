@@ -183,7 +183,7 @@ export class RelayClient extends EventEmitter {
             },
             requestedCapabilities: {
               core: [...REQUIRED_CORE_CAPABILITIES],
-              optional: ["fileDownloads"],
+              optional: ["typing", "fileDownloads"],
             },
           });
           socket.send(JSON.stringify(hello));
@@ -298,7 +298,8 @@ export class RelayClient extends EventEmitter {
         this.emit("inboundMessage", event);
         break;
       }
-      case "transport.delivery.receipt": {
+      case "transport.delivery.receipt":
+      case "transport.typing.updated": {
         this.emit("transportEvent", event);
         break;
       }
