@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
+import net from "node:net";
 import { createRelayChannelPlugin } from "./channel.js";
 import { parseRelayChannelPluginConfig } from "./config.js";
 import { RelayFileDataPlane } from "./file-data-plane.js";
@@ -8,6 +9,7 @@ import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
 import { resolveSessionConversation } from "./session-conversation.js";
 
 type MockRelayOptions = {
+  port?: number;
   capabilities?: {
     coreCapabilities?: Record<string, boolean>;
     optionalCapabilities?: Record<string, boolean>;
@@ -43,7 +45,7 @@ afterEach(async () => {
 function startMockRelay(options: MockRelayOptions = {}) {
   let connectionCount = 0;
   const seenActions: Array<Record<string, any>> = [];
-  const wss = new WebSocketServer({ port: 0 });
+  const wss = new WebSocketServer({ port: options.port ?? 0 });
   servers.push(wss);
   wss.on("connection", (ws) => {
     connectionCount += 1;
@@ -128,6 +130,28 @@ function startMockRelay(options: MockRelayOptions = {}) {
       }
     },
   };
+}
+
+async function reservePort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Failed to reserve port"));
+        return;
+      }
+      const port = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
 }
 
 describe("relay channel plugin", () => {
@@ -284,6 +308,27 @@ describe("relay channel plugin", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(plugin.status.getAccountStatus("default").state).toBe("healthy");
+  });
+
+  it("degrades instead of crashing when relay is unavailable at startup", async () => {
+    const port = await reservePort();
+    const plugin = createRelayChannelPlugin({
+      config: parseRelayChannelPluginConfig({
+        reconnectBackoffMs: 50,
+        maxReconnectBackoffMs: 80,
+        accounts: [{ id: "default", url: `ws://127.0.0.1:${port}` }],
+      }),
+    });
+
+    const startResult = await plugin.gateway.startAccount("default");
+    expect(startResult.status).toMatchObject({
+      state: "degraded",
+    });
+
+    const relay = startMockRelay({ port });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(plugin.status.getAccountStatus("default").state).toBe("healthy");
+    expect(relay.getConnectionCount()).toBeGreaterThan(0);
   });
 
   it("maps inbound text messages into canonical conversation routing", async () => {

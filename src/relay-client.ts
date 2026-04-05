@@ -12,6 +12,7 @@ import {
   parseControlPlaneMessage,
   transportActionRequestSchema,
 } from "./protocol/control-plane.js";
+import { logRuntimeEvent } from "./runtime-log.js";
 import { REQUIRED_CORE_CAPABILITIES } from "./types.js";
 
 type PendingAction = {
@@ -51,6 +52,10 @@ export class RelayClient extends EventEmitter {
 
   public async start(): Promise<RelayCapabilitySnapshot> {
     this.started = true;
+    logRuntimeEvent("info", "Starting relay control-plane client", {
+      accountId: this.options.accountId,
+      url: this.options.url,
+    });
     return await this.openSocket();
   }
 
@@ -60,9 +65,16 @@ export class RelayClient extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    logRuntimeEvent("info", "Stopping relay control-plane client", {
+      accountId: this.options.accountId,
+    });
     if (this.socket) {
       const socket = this.socket;
       this.socket = null;
+      if (socket.readyState === WebSocket.CLOSED) {
+        this.emit("status", { state: "stopped" });
+        return;
+      }
       await new Promise<void>((resolve) => {
         socket.once("close", () => resolve());
         socket.close();
@@ -111,7 +123,13 @@ export class RelayClient extends EventEmitter {
         settled: false,
       });
 
-      this.socket?.send(JSON.stringify(frame));
+      try {
+        this.socket?.send(JSON.stringify(frame));
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pendingActions.delete(requestId);
+        reject(error);
+      }
     });
   }
 
@@ -120,45 +138,69 @@ export class RelayClient extends EventEmitter {
       const socket = new WebSocket(this.options.url);
       this.socket = socket;
       this.helloResolved = false;
+      let suppressReconnect = false;
+      logRuntimeEvent("info", "Connecting relay control-plane socket", {
+        accountId: this.options.accountId,
+        url: this.options.url,
+      });
       this.emit("status", { state: "connecting" });
 
       const fail = (error: unknown) => {
         if (!this.helloResolved) {
+          suppressReconnect = isFatalStartupError(error);
+          const reason = error instanceof Error ? error.message : "Relay connection failed";
+          logRuntimeEvent(suppressReconnect ? "error" : "warn", "Relay control-plane connect failed", {
+            accountId: this.options.accountId,
+            reason,
+            fatal: suppressReconnect,
+          });
+          if (this.started && !suppressReconnect) {
+            this.emit("status", {
+              state: "degraded",
+              reason,
+              capabilities: this.capabilitySnapshot,
+            });
+            this.scheduleReconnect();
+          }
           reject(error);
         }
       };
 
       socket.once("open", () => {
-        const hello = helloRequestSchema.parse({
-          type: "hello",
-          protocolVersion: 1,
-          role: "openclaw-channel-plugin",
-          channelId: "relay-channel",
-          instanceId: `${this.options.accountId}-instance`,
-          accountId: this.options.accountId,
-          supports: {
-            asyncLifecycle: true,
-            fileDownloadRequests: true,
-            capabilityNegotiation: true,
-            accountScopedStatus: true,
-          },
-          requestedCapabilities: {
-            core: [...REQUIRED_CORE_CAPABILITIES],
-            optional: [
-              "messageEdit",
-              "messageDelete",
-              "reactions",
-              "typing",
-              "polls",
-              "pinning",
-              "fileDownloads",
-              "telegram.inlineButtons",
-              "telegram.forumTopics",
-              "telegram.callbackAnswer",
-            ],
-          },
-        });
-        socket.send(JSON.stringify(hello));
+        try {
+          const hello = helloRequestSchema.parse({
+            type: "hello",
+            protocolVersion: 1,
+            role: "openclaw-channel-plugin",
+            channelId: "relay-channel",
+            instanceId: `${this.options.accountId}-instance`,
+            accountId: this.options.accountId,
+            supports: {
+              asyncLifecycle: true,
+              fileDownloadRequests: true,
+              capabilityNegotiation: true,
+              accountScopedStatus: true,
+            },
+            requestedCapabilities: {
+              core: [...REQUIRED_CORE_CAPABILITIES],
+              optional: [
+                "messageEdit",
+                "messageDelete",
+                "reactions",
+                "typing",
+                "polls",
+                "pinning",
+                "fileDownloads",
+                "telegram.inlineButtons",
+                "telegram.forumTopics",
+                "telegram.callbackAnswer",
+              ],
+            },
+          });
+          socket.send(JSON.stringify(hello));
+        } catch (error) {
+          fail(error);
+        }
       });
 
       socket.on("message", (raw) => {
@@ -180,6 +222,10 @@ export class RelayClient extends EventEmitter {
             this.dataPlane = parsed.dataPlane;
             this.reconnectDelayMs = this.options.reconnectBackoffMs;
             this.helloResolved = true;
+            logRuntimeEvent("info", "Relay control-plane socket became healthy", {
+              accountId: this.options.accountId,
+              provider: snapshot.transport.provider,
+            });
             this.emit("capabilities", snapshot);
             this.emit("status", { state: "healthy", capabilities: snapshot });
             resolve(snapshot);
@@ -189,18 +235,29 @@ export class RelayClient extends EventEmitter {
           this.handleEvent(parsed);
         } catch (error) {
           fail(error);
+          logRuntimeEvent("warn", "Relay control-plane protocol error", {
+            accountId: this.options.accountId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
           this.emit("protocolError", error);
         }
       });
 
       socket.on("close", () => {
+        if (this.socket === socket) {
+          this.socket = null;
+        }
         this.failPendingActions({
           code: "ACCOUNT_NOT_READY",
           message: "Relay socket closed",
           retryable: true,
         });
-        if (this.started) {
+        if (this.started && !suppressReconnect) {
           const capabilities = this.capabilitySnapshot;
+          logRuntimeEvent("warn", "Relay control-plane socket disconnected", {
+            accountId: this.options.accountId,
+            reconnectInMs: this.reconnectDelayMs,
+          });
           this.emit("status", {
             state: "degraded",
             reason: "Relay socket disconnected",
@@ -302,12 +359,29 @@ export class RelayClient extends EventEmitter {
     if (this.reconnectTimer || !this.started) {
       return;
     }
+    const reconnectDelayMs = this.reconnectDelayMs;
+    logRuntimeEvent("info", "Scheduling relay control-plane reconnect", {
+      accountId: this.options.accountId,
+      reconnectInMs: reconnectDelayMs,
+    });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      logRuntimeEvent("info", "Attempting relay control-plane reconnect", {
+        accountId: this.options.accountId,
+      });
       void this.openSocket().catch((error) => {
+        const reason = error instanceof Error ? error.message : "Reconnect failed";
+        logRuntimeEvent("warn", "Relay control-plane reconnect failed", {
+          accountId: this.options.accountId,
+          reason,
+          nextReconnectInMs: Math.min(
+            this.reconnectDelayMs * 2,
+            this.options.maxReconnectBackoffMs
+          ),
+        });
         this.emit("status", {
           state: "degraded",
-          reason: error instanceof Error ? error.message : "Reconnect failed",
+          reason,
           capabilities: this.capabilitySnapshot,
         });
         this.reconnectDelayMs = Math.min(
@@ -316,7 +390,7 @@ export class RelayClient extends EventEmitter {
         );
         this.scheduleReconnect();
       });
-    }, this.reconnectDelayMs);
+    }, reconnectDelayMs);
   }
 
   private assertRequiredCapabilities(snapshot: RelayCapabilitySnapshot) {
@@ -342,4 +416,9 @@ export class RelayClient extends EventEmitter {
       this.pendingActions.delete(requestId);
     }
   }
+}
+
+function isFatalStartupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /^CAPABILITY_MISSING:/u.test(message);
 }

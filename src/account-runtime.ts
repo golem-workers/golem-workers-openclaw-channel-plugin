@@ -10,6 +10,7 @@ import type {
 import { resolveAccountConfig } from "./config.js";
 import { mapInboundMessageEvent } from "./relay-events.js";
 import { RelayClient } from "./relay-client.js";
+import { logRuntimeEvent } from "./runtime-log.js";
 import { RelayStatusRegistry } from "./status.js";
 
 export class RelayAccountRuntime {
@@ -41,10 +42,20 @@ export class RelayAccountRuntime {
 
     client.on("status", (status: RelayAccountStatus) => {
       if (status.state === "healthy") {
+        logRuntimeEvent("info", "Relay account runtime healthy", {
+          accountId: this.accountId,
+        });
         this.statusRegistry.setHealthy(this.accountId, status.capabilities);
       } else if (status.state === "connecting") {
+        logRuntimeEvent("info", "Relay account runtime connecting", {
+          accountId: this.accountId,
+        });
         this.statusRegistry.setConnecting(this.accountId);
       } else if (status.state === "degraded") {
+        logRuntimeEvent("warn", "Relay account runtime degraded", {
+          accountId: this.accountId,
+          reason: status.reason,
+        });
         this.statusRegistry.setDegraded(
           this.accountId,
           status.reason,
@@ -68,9 +79,33 @@ export class RelayAccountRuntime {
       this.statusRegistry.setHealthy(this.accountId, snapshot);
     });
 
+    client.on("protocolError", (error) => {
+      logRuntimeEvent("warn", "Relay account runtime protocol error", {
+        accountId: this.accountId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    });
+
     this.client = client;
     this.statusRegistry.setConnecting(this.accountId);
-    await client.start();
+    try {
+      await client.start();
+    } catch (error) {
+      if (isFatalRelayStartupError(error)) {
+        this.client = null;
+        throw error;
+      }
+      logRuntimeEvent("warn", "Relay account runtime entered degraded startup mode", {
+        accountId: this.accountId,
+        reason: error instanceof Error ? error.message : "Relay connection failed",
+      });
+      this.statusRegistry.setDegraded(
+        this.accountId,
+        error instanceof Error ? error.message : "Relay connection failed",
+        client.getCapabilitySnapshot()
+      );
+      return this.statusRegistry.get(this.accountId);
+    }
     return this.statusRegistry.get(this.accountId);
   }
 
@@ -143,4 +178,9 @@ export class RelayAccountRuntime {
     };
     return await this.client.dispatchAction(action);
   }
+}
+
+function isFatalRelayStartupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /^CAPABILITY_MISSING:/u.test(message);
 }
