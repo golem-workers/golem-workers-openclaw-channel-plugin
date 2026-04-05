@@ -542,7 +542,7 @@ export const relayChannelOpenclawPlugin = {
       const runtime = getRuntime(cfg, accountId);
       const snapshot = runtime.getCapabilitySnapshot();
       const discovery = describeMessageTool(snapshot);
-      const actionAllowlist = new Set(["send", "react", "edit", "delete", "pin"]);
+      const actionAllowlist = new Set(["send", "react", "pin"]);
       logRuntimeEvent("info", "describeMessageTool resolved", {
         accountId: resolvePluginAccountId(cfg, accountId),
         transportProvider: snapshot?.transport.provider ?? null,
@@ -568,7 +568,7 @@ export const relayChannelOpenclawPlugin = {
       };
     },
     supportsAction({ action }) {
-      return ["send", "react", "edit", "delete", "pin", "unpin"].includes(action);
+      return ["send", "react", "pin", "unpin"].includes(action);
     },
     async handleAction({ action, params, cfg, accountId, toolContext }) {
       const runtime = await ensureRuntimeStarted(cfg, accountId);
@@ -628,49 +628,6 @@ export const relayChannelOpenclawPlugin = {
         return jsonResult({
           ok: true,
           messageId: result.transportMessageId ?? "",
-          conversationId: result.conversationId,
-        });
-      }
-
-      if (action === "edit") {
-        const transportMessageId = readActionTransportMessageId({
-          rawParams: params,
-          required: true,
-        })!;
-        const result = await runtime.sendAction({
-          kind: "message.edit",
-          target,
-          payload: {
-            transportMessageId,
-            text:
-              readStringParam(params, "message") ??
-              readStringParam(params, "content", { required: true }),
-          },
-          explicitThreadId,
-        });
-        return jsonResult({
-          ok: true,
-          messageId: result.transportMessageId ?? transportMessageId,
-          conversationId: result.conversationId,
-        });
-      }
-
-      if (action === "delete") {
-        const transportMessageId = readActionTransportMessageId({
-          rawParams: params,
-          required: true,
-        })!;
-        const result = await runtime.sendAction({
-          kind: "message.delete",
-          target,
-          payload: {
-            transportMessageId,
-          },
-          explicitThreadId,
-        });
-        return jsonResult({
-          ok: true,
-          messageId: result.transportMessageId ?? transportMessageId,
           conversationId: result.conversationId,
         });
       }

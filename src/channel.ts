@@ -166,32 +166,6 @@ export function createRelayChannelPlugin(
           idempotencyKey: input.idempotencyKey,
         });
       },
-      async editMessage(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "message.edit",
-          target: input.target,
-          payload: {
-            transportMessageId: input.transportMessageId,
-            ...(input.text ? { text: input.text } : {}),
-            ...(input.caption ? { caption: input.caption } : {}),
-            ...(input.parseMode ? { parseMode: input.parseMode } : {}),
-            ...(input.replyMarkup ? { replyMarkup: input.replyMarkup } : {}),
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async deleteMessage(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "message.delete",
-          target: input.target,
-          payload: {
-            transportMessageId: input.transportMessageId,
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
       async setReaction(input) {
         const runtime = getRuntime(input.accountId);
         return await runtime.sendAction({

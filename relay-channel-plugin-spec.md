@@ -251,8 +251,7 @@ Required OpenClaw-facing surfaces:
 - `threading`: reply mode, auto-thread selection, and transport reply behavior
 - `actions.describeMessageTool(...)`: advertise shared `message` tool actions
   from negotiated capabilities
-- `outbound`: translate OpenClaw sends, edits, deletes, reactions, and
-  typing into relay actions
+- `outbound`: translate OpenClaw sends, reactions, and typing into relay actions
 - `directory` and target resolution helpers: user-facing lookup, explicit
   targets, display formatting, and fallback target resolution
 
@@ -294,12 +293,9 @@ These capabilities are expected for a useful v1 relay-backed channel:
 
 These capabilities are additive and must be negotiated explicitly:
 
-- message edit
-- message delete
 - reactions
 - typing or chat actions
 - admin transport operations such as pin and unpin
-- inbound edited updates
 - inbound reaction updates
 - file download requests
 - live directory lookup
@@ -465,8 +461,6 @@ The plugin dials the relay and sends a client hello:
       "threadRouting"
     ],
     "optional": [
-      "messageEdit",
-      "messageDelete",
       "reactions",
       "typing",
       "fileDownloads"
@@ -495,13 +489,10 @@ The relay responds:
     "threadRouting": true
   },
   "optionalCapabilities": {
-    "messageEdit": true,
-    "messageDelete": true,
     "reactions": true,
     "typing": true,
     "pinning": true,
     "fileDownloads": true,
-    "editedUpdates": true,
     "reactionUpdates": true
   },
   "providerCapabilities": {},
@@ -555,8 +546,6 @@ The plugin turns OpenClaw outbound operations into relay actions.
 Base action categories:
 
 - `message.send`
-- `message.edit`
-- `message.delete`
 - `reaction.set`
 - `typing.set`
 - `message.pin`
@@ -697,8 +686,6 @@ The relay converts provider updates into normalized transport events.
 Core inbound event families:
 
 - `transport.message.received`
-- `transport.message.edited`
-- `transport.message.deleted`
 - `transport.reaction.updated`
 - `transport.delivery.receipt`
 - `transport.typing.updated`
@@ -985,7 +972,6 @@ These are provider-facing failures:
 - target not found
 - permission denied by provider
 - file too large
-- message cannot be edited
 - rate limit
 - upstream transport timeout
 
@@ -1140,8 +1126,7 @@ my-relay-channel/
 - `outbound-session-route.ts`: canonical
   `resolveOutboundSessionRoute(...)`
 - `message-actions.ts`: `actions.describeMessageTool(...)` and action handlers
-- `outbound-adapter.ts`: send, edit, delete, reaction, and typing relay
-  actions
+- `outbound-adapter.ts`: send, reaction, and typing relay actions
 - `file-data-plane.ts`: upload or download token handling and local HTTP helper
   logic
 - `protocol/control-plane.ts`: zod or equivalent typed schemas for hello,
@@ -1266,8 +1251,7 @@ An implementation agent should treat the following as the canonical work plan.
 - implement text send
 - implement inbound message receive
 - implement reply and thread routing
-- implement edit, delete, reaction, typing, and poll actions behind negotiated
-  capabilities
+- implement reaction, typing, and poll actions behind negotiated capabilities
 
 ### Phase 6: Files
 
@@ -1343,8 +1327,7 @@ The implementation is done when all of the following are true:
 5. Add canonical session routing, outbound session route building, and thread or
    reply mapping.
 6. Add the data plane for uploads and downloads.
-7. Add media, edits, deletes, reactions, typing, pin/unpin, and
-   provider-specific extensions.
+7. Add media, reactions, typing, pin/unpin, and provider-specific extensions.
 8. Add replay, reconnect, cursor persistence, capability refresh, and
    idempotent retries.
 9. Add future transport-auth extensions only after transport parity is stable.

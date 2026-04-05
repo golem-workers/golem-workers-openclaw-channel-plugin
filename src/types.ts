@@ -13,8 +13,6 @@ export const REQUIRED_CORE_CAPABILITIES = [
 ] as const;
 
 export const OPTIONAL_CAPABILITY_TO_ACTION: Record<string, string> = {
-  messageEdit: "edit",
-  messageDelete: "delete",
   reactions: "react",
   typing: "typing",
   pinning: "pin",

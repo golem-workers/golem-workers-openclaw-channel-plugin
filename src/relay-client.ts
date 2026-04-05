@@ -184,8 +184,6 @@ export class RelayClient extends EventEmitter {
             requestedCapabilities: {
               core: [...REQUIRED_CORE_CAPABILITIES],
               optional: [
-                "messageEdit",
-                "messageDelete",
                 "reactions",
                 "typing",
                 "pinning",
@@ -305,8 +303,6 @@ export class RelayClient extends EventEmitter {
         this.emit("inboundMessage", event);
         break;
       }
-      case "transport.message.edited":
-      case "transport.message.deleted":
       case "transport.reaction.updated":
       case "transport.delivery.receipt":
       case "transport.typing.updated": {

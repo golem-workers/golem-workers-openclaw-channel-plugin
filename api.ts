@@ -71,8 +71,6 @@ export type RelayResolvedTarget = {
 
 export type RelayActionKind =
   | "message.send"
-  | "message.edit"
-  | "message.delete"
   | "reaction.set"
   | "typing.set"
   | "message.pin"
@@ -200,8 +198,6 @@ export type RelayInboundMessageEvent = {
 export type RelayTransportEvent = {
   type: "event";
   eventType:
-    | "transport.message.edited"
-    | "transport.message.deleted"
     | "transport.reaction.updated"
     | "transport.delivery.receipt"
     | "transport.typing.updated";
@@ -287,22 +283,6 @@ export type ChatChannelPlugin = {
       forceDocument?: boolean;
       replyToTransportMessageId?: string | null;
       sessionKey?: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    editMessage(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      transportMessageId: string;
-      text?: string;
-      caption?: string;
-      parseMode?: string;
-      replyMarkup?: Record<string, JsonValue>;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    deleteMessage(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      transportMessageId: string;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
     setReaction(input: {

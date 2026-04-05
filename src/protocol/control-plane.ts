@@ -93,8 +93,6 @@ export const transportActionSchema = z.object({
   actionId: z.string(),
   kind: z.enum([
     "message.send",
-    "message.edit",
-    "message.delete",
     "reaction.set",
     "typing.set",
     "message.pin",
@@ -241,30 +239,6 @@ const transportConversationPayloadSchema = z.object({
     .optional(),
 });
 
-export const transportMessageEditedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.message.edited"),
-  payload: transportConversationPayloadSchema.extend({
-    message: z.object({
-      transportMessageId: z.string(),
-      text: z.string().nullable().optional(),
-      caption: z.string().nullable().optional(),
-      editedAtMs: z.number().int().nullable().optional(),
-      replyMarkup: z.record(z.string(), z.unknown()).optional(),
-    }),
-  }),
-});
-
-export const transportMessageDeletedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.message.deleted"),
-  payload: transportConversationPayloadSchema.extend({
-    message: z.object({
-      transportMessageId: z.string(),
-    }),
-  }),
-});
-
 export const transportReactionUpdatedEventSchema = z.object({
   type: z.literal("event"),
   eventType: z.literal("transport.reaction.updated"),
@@ -341,8 +315,6 @@ export const controlPlaneEventSchema = z.union([
   transportActionCompletedEventSchema,
   transportActionFailedEventSchema,
   transportMessageReceivedEventSchema,
-  transportMessageEditedEventSchema,
-  transportMessageDeletedEventSchema,
   transportReactionUpdatedEventSchema,
   transportDeliveryReceiptEventSchema,
   transportTypingUpdatedEventSchema,

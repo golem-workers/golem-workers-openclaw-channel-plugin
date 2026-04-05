@@ -474,7 +474,7 @@ describe("relay channel plugin", () => {
     });
   });
 
-  it("dispatches edit and download actions through the negotiated relay channel", async () => {
+  it("dispatches download actions through the negotiated relay channel", async () => {
     const relay = startMockRelay({
       onAction(frame, ws) {
         ws.send(
@@ -484,15 +484,10 @@ describe("relay channel plugin", () => {
             payload: {
               requestId: frame.requestId,
               actionId: frame.action.actionId,
-              result:
-                frame.action.kind === "file.download.request"
-                  ? {
-                      downloadUrl: "http://127.0.0.1:43129/downloads/download-1",
-                      token: "download-1",
-                    }
-                  : {
-                      transportMessageId: "edited-1001",
-                    },
+              result: {
+                downloadUrl: "http://127.0.0.1:43129/downloads/download-1",
+                token: "download-1",
+              },
             },
           })
         );
@@ -506,12 +501,6 @@ describe("relay channel plugin", () => {
     });
 
     await plugin.gateway.startAccount("default");
-    await plugin.outbound.editMessage({
-      accountId: "default",
-      target: plugin.directory.resolveTarget("telegram:group:-100123"),
-      transportMessageId: "1001",
-      text: "updated",
-    });
     const download = await plugin.outbound.requestFileDownload({
       accountId: "default",
       target: plugin.directory.resolveTarget("telegram:group:-100123"),
@@ -519,13 +508,6 @@ describe("relay channel plugin", () => {
     });
 
     expect(relay.seenActions[0]?.action).toMatchObject({
-      kind: "message.edit",
-      payload: {
-        transportMessageId: "1001",
-        text: "updated",
-      },
-    });
-    expect(relay.seenActions[1]?.action).toMatchObject({
       kind: "file.download.request",
       payload: {
         fileId: "file-1",
@@ -638,7 +620,7 @@ describe("relay channel plugin", () => {
           ws.send(
             JSON.stringify({
               type: "event",
-              eventType: "transport.message.edited",
+              eventType: "transport.reaction.updated",
               payload: {
                 eventId: "evt-2",
                 accountId: "default",
@@ -647,7 +629,9 @@ describe("relay channel plugin", () => {
                 },
                 message: {
                   transportMessageId: "2002",
-                  text: "edited",
+                },
+                reaction: {
+                  emojis: ["👍"],
                 },
               },
             })
@@ -667,7 +651,7 @@ describe("relay channel plugin", () => {
 
     await plugin.gateway.startAccount("default");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(seenEvents).toEqual([{ eventType: "transport.message.edited" }]);
+    expect(seenEvents).toEqual([{ eventType: "transport.reaction.updated" }]);
   });
 
   it("keeps security and approvals plugin-owned", async () => {
