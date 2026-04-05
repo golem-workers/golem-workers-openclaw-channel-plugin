@@ -4,6 +4,15 @@ import {
   type ChannelPlugin,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/core";
+import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
+import { resolveInteractiveTextFallback } from "openclaw/plugin-sdk/interactive-runtime";
+import {
+  jsonResult,
+  readReactionParams,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+} from "openclaw/plugin-sdk/telegram-core";
 import { RelayAccountRuntime } from "./account-runtime.js";
 import { parseRelayChannelPluginConfig, relayChannelPluginConfigSchema, resolveAccountConfig } from "./config.js";
 import { describeMessageTool } from "./message-actions.js";
@@ -82,6 +91,181 @@ function mapRelayScopeToDirectoryKind(scope?: "dm" | "group" | "topic") {
 
 function mapRelayScopeToChatType(scope?: "dm" | "group" | "topic") {
   return scope === "dm" ? "direct" : "group";
+}
+
+function normalizeThreadId(threadId: string | number | null | undefined) {
+  return threadId !== undefined && threadId !== null ? String(threadId) : null;
+}
+
+function buildReplyMarkup(
+  buttons:
+    | ReadonlyArray<ReadonlyArray<{ text: string; callback_data: string }>>
+    | undefined
+) {
+  if (!buttons?.length) {
+    return undefined;
+  }
+  const inlineKeyboard = buttons
+    .map((row) =>
+      row
+        .filter(
+          (button) =>
+            typeof button?.text === "string" &&
+            button.text.trim().length > 0 &&
+            typeof button?.callback_data === "string" &&
+            button.callback_data.trim().length > 0
+        )
+        .map((button) => ({
+          text: button.text,
+          callback_data: button.callback_data,
+        }))
+    )
+    .filter((row) => row.length > 0);
+  return inlineKeyboard.length > 0 ? { inline_keyboard: inlineKeyboard } : undefined;
+}
+
+function readTelegramInlineButtons(
+  rawButtons: unknown,
+  interactive: unknown
+): ReadonlyArray<ReadonlyArray<{ text: string; callback_data: string }>> | undefined {
+  if (Array.isArray(rawButtons)) {
+    const normalizedRows = rawButtons
+      .map((row) => {
+        if (!Array.isArray(row)) {
+          return [];
+        }
+        return row
+          .map((button) => {
+            if (!isRecord(button)) {
+              return null;
+            }
+            const text = typeof button.text === "string" ? button.text.trim() : "";
+            const callbackData =
+              typeof button.callback_data === "string"
+                ? button.callback_data.trim()
+                : typeof button.callbackData === "string"
+                  ? button.callbackData.trim()
+                  : "";
+            return text && callbackData ? { text, callback_data: callbackData } : null;
+          })
+          .filter((button): button is { text: string; callback_data: string } => button !== null);
+      })
+      .filter((row) => row.length > 0);
+    if (normalizedRows.length > 0) {
+      return normalizedRows;
+    }
+  }
+
+  if (!isRecord(interactive) || !Array.isArray(interactive.blocks)) {
+    return undefined;
+  }
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (const block of interactive.blocks) {
+    if (!isRecord(block)) {
+      continue;
+    }
+    if (block.type === "buttons" && Array.isArray(block.buttons)) {
+      for (let index = 0; index < block.buttons.length; index += 3) {
+        const row = block.buttons
+          .slice(index, index + 3)
+          .map((button) => {
+            if (!isRecord(button)) {
+              return null;
+            }
+            const label = typeof button.label === "string" ? button.label.trim() : "";
+            const value =
+              typeof button.value === "string"
+                ? button.value.trim()
+                : typeof button.text === "string"
+                  ? button.text.trim()
+                  : "";
+            return label && value ? { text: label, callback_data: value } : null;
+          })
+          .filter((button): button is { text: string; callback_data: string } => button !== null);
+        if (row.length > 0) {
+          rows.push(row);
+        }
+      }
+      continue;
+    }
+    if (block.type === "select" && Array.isArray(block.options)) {
+      for (let index = 0; index < block.options.length; index += 3) {
+        const row = block.options
+          .slice(index, index + 3)
+          .map((option) => {
+            if (!isRecord(option)) {
+              return null;
+            }
+            const label = typeof option.label === "string" ? option.label.trim() : "";
+            const value = typeof option.value === "string" ? option.value.trim() : "";
+            return label && value ? { text: label, callback_data: value } : null;
+          })
+          .filter((button): button is { text: string; callback_data: string } => button !== null);
+        if (row.length > 0) {
+          rows.push(row);
+        }
+      }
+    }
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
+function resolveOutboundTarget(to: string, threadId?: string | number | null) {
+  const resolvedTarget = resolveTarget(to);
+  const normalizedThreadId = normalizeThreadId(threadId);
+  return {
+    resolvedTarget,
+    target: {
+      ...resolvedTarget,
+      threadId: normalizedThreadId ?? resolvedTarget.threadId ?? null,
+    },
+    explicitThreadId: normalizedThreadId,
+  };
+}
+
+function readMessageActionTarget(params: {
+  rawParams: Record<string, unknown>;
+  toolContext?: { currentChannelId?: string; currentThreadTs?: string };
+}) {
+  const to =
+    readStringParam(params.rawParams, "to") ?? params.toolContext?.currentChannelId?.trim() ?? "";
+  if (!to) {
+    throw new Error("Target is required. Provide `to` explicitly or invoke the action from a conversation context.");
+  }
+  const threadId =
+    readStringOrNumberParam(params.rawParams, "threadId") ?? params.toolContext?.currentThreadTs;
+  return resolveOutboundTarget(to, threadId ?? null);
+}
+
+function readActionTransportMessageId(params: {
+  rawParams: Record<string, unknown>;
+  fallbackMessageId?: string | number;
+  required?: boolean;
+}) {
+  const messageId =
+    readStringOrNumberParam(params.rawParams, "transportMessageId") ??
+    readStringOrNumberParam(params.rawParams, "messageId") ??
+    readStringOrNumberParam(params.rawParams, "targetTransportMessageId") ??
+    params.fallbackMessageId;
+  if (messageId === undefined || messageId === null || String(messageId).trim().length === 0) {
+    if (params.required === false) {
+      return undefined;
+    }
+    throw new Error("messageId is required.");
+  }
+  return String(messageId);
+}
+
+function buildOpenClawOutboundResult(
+  result: { transportMessageId?: string; conversationId?: string; downloadUrl?: string },
+  fallbackMessageId: string
+) {
+  return {
+    channel: CHANNEL_ID,
+    messageId: result.transportMessageId ?? result.conversationId ?? result.downloadUrl ?? fallbackMessageId,
+    conversationId: result.conversationId,
+    meta: result,
+  };
 }
 
 function upsertAccountSection(
@@ -350,54 +534,217 @@ export const relayChannelOpenclawPlugin = {
   actions: {
     describeMessageTool({ cfg, accountId }) {
       const runtime = getRuntime(cfg, accountId);
+      const snapshot = runtime.getCapabilitySnapshot();
+      const discovery = describeMessageTool(snapshot);
+      const actionAllowlist = new Set(["send", "poll", "react", "edit", "delete", "pin"]);
+      const capabilities = new Set<string>();
+      if (
+        snapshot?.optionalCapabilities["telegram.inlineButtons"] ||
+        snapshot?.providerCapabilities["telegram.inlineButtons"]
+      ) {
+        capabilities.add("interactive");
+        capabilities.add("buttons");
+      }
       return {
-        actions: describeMessageTool(runtime.getCapabilitySnapshot()).actions,
+        actions: discovery.actions.filter((action) => actionAllowlist.has(action)),
+        capabilities: Array.from(capabilities),
       };
+    },
+    supportsAction({ action }) {
+      return ["poll", "react", "edit", "delete", "pin", "unpin"].includes(action);
+    },
+    async handleAction({ action, params, cfg, accountId, toolContext }) {
+      const runtime = await ensureRuntimeStarted(cfg, accountId);
+      const { target, explicitThreadId } = readMessageActionTarget({
+        rawParams: params,
+        toolContext,
+      });
+
+      if (action === "poll") {
+        const question =
+          readStringParam(params, "question") ??
+          readStringParam(params, "pollQuestion", { required: true });
+        const options =
+          readStringArrayParam(params, "answers") ??
+          readStringArrayParam(params, "pollOption", { required: true });
+        const result = await runtime.sendAction({
+          kind: "poll.send",
+          target,
+          payload: {
+            question,
+            options,
+            ...(readBooleanParam(params, "allowMultiselect") === true ||
+            readBooleanParam(params, "pollMulti") === true
+              ? { allowsMultipleAnswers: true }
+              : {}),
+            ...(readBooleanParam(params, "isAnonymous") !== undefined
+              ? { isAnonymous: readBooleanParam(params, "isAnonymous") === true }
+              : readBooleanParam(params, "pollAnonymous") !== undefined
+                ? { isAnonymous: readBooleanParam(params, "pollAnonymous") === true }
+                : {}),
+          },
+          explicitThreadId,
+        });
+        return jsonResult({
+          ok: true,
+          messageId: result.transportMessageId ?? "",
+          conversationId: result.conversationId,
+        });
+      }
+
+      if (action === "edit") {
+        const transportMessageId = readActionTransportMessageId({
+          rawParams: params,
+          required: true,
+        })!;
+        const result = await runtime.sendAction({
+          kind: "message.edit",
+          target,
+          payload: {
+            transportMessageId,
+            text:
+              readStringParam(params, "message") ??
+              readStringParam(params, "content", { required: true }),
+          },
+          explicitThreadId,
+        });
+        return jsonResult({
+          ok: true,
+          messageId: result.transportMessageId ?? transportMessageId,
+          conversationId: result.conversationId,
+        });
+      }
+
+      if (action === "delete") {
+        const transportMessageId = readActionTransportMessageId({
+          rawParams: params,
+          required: true,
+        })!;
+        const result = await runtime.sendAction({
+          kind: "message.delete",
+          target,
+          payload: {
+            transportMessageId,
+          },
+          explicitThreadId,
+        });
+        return jsonResult({
+          ok: true,
+          messageId: result.transportMessageId ?? transportMessageId,
+          conversationId: result.conversationId,
+        });
+      }
+
+      if (action === "react") {
+        const transportMessageId = readActionTransportMessageId({
+          rawParams: params,
+          fallbackMessageId: toolContext?.currentMessageId,
+          required: true,
+        })!;
+        const reaction = readReactionParams(params, {
+          removeErrorMessage: "Emoji is required to remove a reaction.",
+        });
+        const emojis = reaction.remove || reaction.isEmpty ? [] : [reaction.emoji];
+        const result = await runtime.sendAction({
+          kind: "reaction.set",
+          target,
+          payload: {
+            transportMessageId,
+            emojis,
+          },
+          explicitThreadId,
+        });
+        return jsonResult({
+          ok: true,
+          messageId: result.transportMessageId ?? transportMessageId,
+          conversationId: result.conversationId,
+          ...(emojis.length > 0 ? { added: reaction.emoji } : { removed: true }),
+        });
+      }
+
+      if (action === "pin" || action === "unpin") {
+        const transportMessageId = readActionTransportMessageId({
+          rawParams: params,
+          required: action === "pin",
+        });
+        const result = await runtime.sendAction({
+          kind: action === "pin" ? "message.pin" : "message.unpin",
+          target,
+          payload: {
+            ...(transportMessageId ? { transportMessageId } : {}),
+            ...(action === "pin" && readBooleanParam(params, "disableNotification") !== undefined
+              ? { disableNotification: readBooleanParam(params, "disableNotification") === true }
+              : {}),
+          },
+          explicitThreadId,
+        });
+        return jsonResult({
+          ok: true,
+          messageId: result.transportMessageId ?? transportMessageId ?? "",
+          conversationId: result.conversationId,
+        });
+      }
+
+      throw new Error(`Unsupported relay-channel action: ${action}`);
     },
   },
   outbound: {
     deliveryMode: "direct" as const,
-    sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
+    sendPayload: async (input: any) => {
+      const { cfg, to, payload, accountId, replyToId, threadId, forceDocument } = input;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const resolvedTarget = resolveTarget(to);
+      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const telegramChannelData =
+        isRecord(payload?.channelData) && isRecord(payload.channelData.telegram)
+          ? payload.channelData.telegram
+          : null;
+      const buttons = readTelegramInlineButtons(telegramChannelData?.buttons, payload?.interactive);
+      const replyMarkup = buildReplyMarkup(buttons);
+      const text =
+        resolveInteractiveTextFallback({
+          text: typeof payload?.text === "string" ? payload.text : undefined,
+          interactive: payload?.interactive,
+        }) ?? "";
       const result = await runtime.sendAction({
         kind: "message.send",
-        target: {
-          ...resolvedTarget,
-          threadId:
-            threadId !== undefined && threadId !== null
-              ? String(threadId)
-              : resolvedTarget.threadId ?? null,
+        target,
+        payload: {
+          ...(text ? { text } : {}),
+          ...(typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0
+            ? { mediaUrl: payload.mediaUrl }
+            : {}),
+          ...(payload?.audioAsVoice === true ? { asVoice: true } : {}),
+          ...(forceDocument === true ? { forceDocument: true } : {}),
+          ...(replyMarkup ? { replyMarkup } : {}),
         },
+        replyToTransportMessageId: replyToId ?? null,
+        explicitThreadId,
+      });
+      return buildOpenClawOutboundResult(result, "relay-message");
+    },
+    sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
+      const runtime = await ensureRuntimeStarted(cfg, accountId);
+      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const result = await runtime.sendAction({
+        kind: "message.send",
+        target,
         payload: { text },
         replyToTransportMessageId: replyToId ?? null,
-        explicitThreadId:
-          threadId !== undefined && threadId !== null ? String(threadId) : null,
+        explicitThreadId,
       });
-      return {
-        channel: CHANNEL_ID,
-        messageId: result.transportMessageId ?? result.conversationId ?? "relay-message",
-        conversationId: result.conversationId,
-        meta: result,
-      };
+      return buildOpenClawOutboundResult(result, "relay-message");
     },
     sendMedia: async (input: any) => {
       const { cfg, to, text, mediaUrl, accountId, replyToId, threadId, forceDocument } = input;
       const asVoice = input.asVoice === true;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const resolvedTarget = resolveTarget(to);
+      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
       if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) {
         throw new Error("MEDIA_URL_REQUIRED: relay-channel sendMedia requires mediaUrl");
       }
       const result = await runtime.sendAction({
         kind: "message.send",
-        target: {
-          ...resolvedTarget,
-          threadId:
-            threadId !== undefined && threadId !== null
-              ? String(threadId)
-              : resolvedTarget.threadId ?? null,
-        },
+        target,
         payload: {
           ...(text ? { text } : {}),
           mediaUrl,
@@ -405,14 +752,36 @@ export const relayChannelOpenclawPlugin = {
           ...(forceDocument === true ? { forceDocument: true } : {}),
         },
         replyToTransportMessageId: replyToId ?? null,
-        explicitThreadId:
-          threadId !== undefined && threadId !== null ? String(threadId) : null,
+        explicitThreadId,
+      });
+      return buildOpenClawOutboundResult(result, "relay-message");
+    },
+    sendPoll: async ({ cfg, to, poll, accountId, threadId, silent, isAnonymous }) => {
+      const runtime = await ensureRuntimeStarted(cfg, accountId);
+      const { target, explicitThreadId } = resolveOutboundTarget(to, threadId ?? null);
+      const result = await runtime.sendAction({
+        kind: "poll.send",
+        target,
+        payload: {
+          question: poll.question,
+          options: poll.options,
+          ...(typeof poll.maxSelections === "number" && poll.maxSelections > 1
+            ? { allowsMultipleAnswers: true }
+            : {}),
+          ...(typeof poll.durationSeconds === "number"
+            ? { durationSeconds: poll.durationSeconds }
+            : {}),
+          ...(typeof poll.durationHours === "number"
+            ? { durationHours: poll.durationHours }
+            : {}),
+          ...(silent !== undefined ? { silent } : {}),
+          ...(isAnonymous !== undefined ? { isAnonymous } : {}),
+        },
+        explicitThreadId,
       });
       return {
-        channel: CHANNEL_ID,
-        messageId: result.transportMessageId ?? result.conversationId ?? "relay-message",
+        messageId: result.transportMessageId ?? result.conversationId ?? "relay-poll",
         conversationId: result.conversationId,
-        meta: result,
       };
     },
     requestFileDownload: async (input: any) => {
@@ -424,12 +793,7 @@ export const relayChannelOpenclawPlugin = {
         target: resolvedTarget,
         payload: { fileId },
       });
-      return {
-        channel: CHANNEL_ID,
-        messageId: result.transportMessageId ?? result.downloadUrl ?? "relay-download",
-        conversationId: result.conversationId,
-        meta: result,
-      };
+      return buildOpenClawOutboundResult(result, "relay-download");
     },
   },
 } as ChannelPlugin<RelayResolvedAccount>;
