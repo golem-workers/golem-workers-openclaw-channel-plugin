@@ -7,7 +7,6 @@ import {
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
 import {
   jsonResult,
-  readReactionParams,
   readStringOrNumberParam,
   readStringParam,
 } from "openclaw/plugin-sdk/telegram-core";
@@ -231,25 +230,6 @@ function readMessageActionTarget(params: {
   const threadId =
     readStringOrNumberParam(params.rawParams, "threadId") ?? params.toolContext?.currentThreadTs;
   return resolveOutboundTarget(to, threadId ?? null, params.defaultChannel);
-}
-
-function readActionTransportMessageId(params: {
-  rawParams: Record<string, unknown>;
-  fallbackMessageId?: string | number;
-  required?: boolean;
-}) {
-  const messageId =
-    readStringOrNumberParam(params.rawParams, "transportMessageId") ??
-    readStringOrNumberParam(params.rawParams, "messageId") ??
-    readStringOrNumberParam(params.rawParams, "targetTransportMessageId") ??
-    params.fallbackMessageId;
-  if (messageId === undefined || messageId === null || String(messageId).trim().length === 0) {
-    if (params.required === false) {
-      return undefined;
-    }
-    throw new Error("messageId is required.");
-  }
-  return String(messageId);
 }
 
 function buildOpenClawOutboundResult(
@@ -542,7 +522,7 @@ export const relayChannelOpenclawPlugin = {
       const runtime = getRuntime(cfg, accountId);
       const snapshot = runtime.getCapabilitySnapshot();
       const discovery = describeMessageTool(snapshot);
-      const actionAllowlist = new Set(["send", "react", "pin"]);
+      const actionAllowlist = new Set(["send"]);
       logRuntimeEvent("info", "describeMessageTool resolved", {
         accountId: resolvePluginAccountId(cfg, accountId),
         transportProvider: snapshot?.transport.provider ?? null,
@@ -568,7 +548,7 @@ export const relayChannelOpenclawPlugin = {
       };
     },
     supportsAction({ action }) {
-      return ["send", "react", "pin", "unpin"].includes(action);
+      return action === "send";
     },
     async handleAction({ action, params, cfg, accountId, toolContext }) {
       const runtime = await ensureRuntimeStarted(cfg, accountId);
@@ -628,56 +608,6 @@ export const relayChannelOpenclawPlugin = {
         return jsonResult({
           ok: true,
           messageId: result.transportMessageId ?? "",
-          conversationId: result.conversationId,
-        });
-      }
-
-      if (action === "react") {
-        const transportMessageId = readActionTransportMessageId({
-          rawParams: params,
-          fallbackMessageId: toolContext?.currentMessageId,
-          required: true,
-        })!;
-        const reaction = readReactionParams(params, {
-          removeErrorMessage: "Emoji is required to remove a reaction.",
-        });
-        const emojis = reaction.remove || reaction.isEmpty ? [] : [reaction.emoji];
-        const result = await runtime.sendAction({
-          kind: "reaction.set",
-          target,
-          payload: {
-            transportMessageId,
-            emojis,
-          },
-          explicitThreadId,
-        });
-        return jsonResult({
-          ok: true,
-          messageId: result.transportMessageId ?? transportMessageId,
-          conversationId: result.conversationId,
-          ...(emojis.length > 0 ? { added: reaction.emoji } : { removed: true }),
-        });
-      }
-
-      if (action === "pin" || action === "unpin") {
-        const transportMessageId = readActionTransportMessageId({
-          rawParams: params,
-          required: action === "pin",
-        });
-        const result = await runtime.sendAction({
-          kind: action === "pin" ? "message.pin" : "message.unpin",
-          target,
-          payload: {
-            ...(transportMessageId ? { transportMessageId } : {}),
-            ...(action === "pin" && readBooleanParam(params, "disableNotification") !== undefined
-              ? { disableNotification: readBooleanParam(params, "disableNotification") === true }
-              : {}),
-          },
-          explicitThreadId,
-        });
-        return jsonResult({
-          ok: true,
-          messageId: result.transportMessageId ?? transportMessageId ?? "",
           conversationId: result.conversationId,
         });
       }

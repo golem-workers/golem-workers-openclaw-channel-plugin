@@ -71,10 +71,6 @@ export type RelayResolvedTarget = {
 
 export type RelayActionKind =
   | "message.send"
-  | "reaction.set"
-  | "typing.set"
-  | "message.pin"
-  | "message.unpin"
   | "file.download.request";
 
 export type RelayActionPayload = {
@@ -197,10 +193,7 @@ export type RelayInboundMessageEvent = {
 
 export type RelayTransportEvent = {
   type: "event";
-  eventType:
-    | "transport.reaction.updated"
-    | "transport.delivery.receipt"
-    | "transport.typing.updated";
+  eventType: "transport.delivery.receipt";
   payload: Record<string, JsonValue>;
 };
 
@@ -283,33 +276,6 @@ export type ChatChannelPlugin = {
       forceDocument?: boolean;
       replyToTransportMessageId?: string | null;
       sessionKey?: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    setReaction(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      transportMessageId: string;
-      emojis: string[];
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    setTyping(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      enabled?: boolean;
-      chatAction?: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    pinMessage(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      transportMessageId: string;
-      disableNotification?: boolean;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    unpinMessage(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      transportMessageId?: string;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
     requestFileDownload(input: {

@@ -166,55 +166,6 @@ export function createRelayChannelPlugin(
           idempotencyKey: input.idempotencyKey,
         });
       },
-      async setReaction(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "reaction.set",
-          target: input.target,
-          payload: {
-            transportMessageId: input.transportMessageId,
-            emojis: input.emojis,
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async setTyping(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "typing.set",
-          target: input.target,
-          payload: {
-            ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-            ...(input.chatAction ? { chatAction: input.chatAction } : {}),
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async pinMessage(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "message.pin",
-          target: input.target,
-          payload: {
-            transportMessageId: input.transportMessageId,
-            ...(input.disableNotification !== undefined
-              ? { disableNotification: input.disableNotification }
-              : {}),
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async unpinMessage(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "message.unpin",
-          target: input.target,
-          payload: {
-            ...(input.transportMessageId ? { transportMessageId: input.transportMessageId } : {}),
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
       async requestFileDownload(input) {
         const runtime = getRuntime(input.accountId);
         return await runtime.sendAction({

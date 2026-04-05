@@ -251,7 +251,8 @@ Required OpenClaw-facing surfaces:
 - `threading`: reply mode, auto-thread selection, and transport reply behavior
 - `actions.describeMessageTool(...)`: advertise shared `message` tool actions
   from negotiated capabilities
-- `outbound`: translate OpenClaw sends, reactions, and typing into relay actions
+- `outbound`: translate OpenClaw sends and file-download requests into relay
+  actions
 - `directory` and target resolution helpers: user-facing lookup, explicit
   targets, display formatting, and fallback target resolution
 
@@ -293,10 +294,6 @@ These capabilities are expected for a useful v1 relay-backed channel:
 
 These capabilities are additive and must be negotiated explicitly:
 
-- reactions
-- typing or chat actions
-- admin transport operations such as pin and unpin
-- inbound reaction updates
 - file download requests
 - live directory lookup
 - native approval delivery helpers
@@ -460,11 +457,7 @@ The plugin dials the relay and sends a client hello:
       "replyTo",
       "threadRouting"
     ],
-    "optional": [
-      "reactions",
-      "typing",
-      "fileDownloads"
-    ]
+    "optional": ["fileDownloads"]
   }
 }
 ```
@@ -489,11 +482,7 @@ The relay responds:
     "threadRouting": true
   },
   "optionalCapabilities": {
-    "reactions": true,
-    "typing": true,
-    "pinning": true,
-    "fileDownloads": true,
-    "reactionUpdates": true
+    "fileDownloads": true
   },
   "providerCapabilities": {},
   "limits": {
@@ -501,14 +490,7 @@ The relay responds:
     "maxCaptionBytes": 4096,
     "maxPollOptions": 10
   },
-  "targetCapabilities": {
-    "dm": {
-      "typing": true
-    },
-    "group": {
-      "typing": true
-    }
-  },
+  "targetCapabilities": {},
   "dataPlane": {
     "uploadBaseUrl": "http://127.0.0.1:43129/uploads",
     "downloadBaseUrl": "http://127.0.0.1:43129/downloads"
@@ -546,10 +528,6 @@ The plugin turns OpenClaw outbound operations into relay actions.
 Base action categories:
 
 - `message.send`
-- `reaction.set`
-- `typing.set`
-- `message.pin`
-- `message.unpin`
 - `file.download.request`
 
 Each action carries:
@@ -686,9 +664,7 @@ The relay converts provider updates into normalized transport events.
 Core inbound event families:
 
 - `transport.message.received`
-- `transport.reaction.updated`
 - `transport.delivery.receipt`
-- `transport.typing.updated`
 - `transport.capabilities.updated`
 - `transport.account.status`
 
@@ -897,18 +873,10 @@ download URL or fetch token for the data plane.
 
 This avoids forcing every inbound event to carry raw file bytes.
 
-## Reactions, Typing, And Admin Operations
+## Transport Scope
 
-These are transport features, not auth features, so they belong in the v1 spec.
-
-The relay protocol should support:
-
-- setting or clearing reactions
-- inbound reaction updates
-- starting and stopping typing indicators or chat actions
-- pin and unpin style transport admin actions
-
-All such operations must be capability-gated.
+This trimmed plugin surface intentionally keeps only baseline send/receive flows,
+file-download requests, and delivery-receipt transport events.
 
 ## State Ownership
 
@@ -1126,7 +1094,7 @@ my-relay-channel/
 - `outbound-session-route.ts`: canonical
   `resolveOutboundSessionRoute(...)`
 - `message-actions.ts`: `actions.describeMessageTool(...)` and action handlers
-- `outbound-adapter.ts`: send, reaction, and typing relay actions
+- `outbound-adapter.ts`: send and file-download relay actions
 - `file-data-plane.ts`: upload or download token handling and local HTTP helper
   logic
 - `protocol/control-plane.ts`: zod or equivalent typed schemas for hello,
@@ -1251,7 +1219,8 @@ An implementation agent should treat the following as the canonical work plan.
 - implement text send
 - implement inbound message receive
 - implement reply and thread routing
-- implement reaction, typing, and poll actions behind negotiated capabilities
+- keep the plugin action surface trimmed to baseline send plus negotiated
+  download and approval-native helpers
 
 ### Phase 6: Files
 
@@ -1327,7 +1296,8 @@ The implementation is done when all of the following are true:
 5. Add canonical session routing, outbound session route building, and thread or
    reply mapping.
 6. Add the data plane for uploads and downloads.
-7. Add media, reactions, typing, pin/unpin, and provider-specific extensions.
+7. Add media, file-transfer, and provider-specific extensions that survive the
+   trimmed plugin surface.
 8. Add replay, reconnect, cursor persistence, capability refresh, and
    idempotent retries.
 9. Add future transport-auth extensions only after transport parity is stable.
@@ -1357,9 +1327,9 @@ Minimum v1 conformance should be tracked per account and per target scope.
 | Session routing | Yes | `id`, `threadId`, `baseConversationId`, parents |
 | Replay and reconnect | Yes | Cursor restore and explicit gap handling |
 | File data plane | Yes | Local upload and download architecture |
-| Edits and deletes | Capability-gated | Optional but formalized |
-| Reactions and typing | Capability-gated | Optional but formalized |
-| Pin and unpin | Capability-gated | Optional but formalized |
+| Edits and deletes | Trimmed from plugin surface | Not part of current plugin contract |
+| Reactions and typing | Trimmed from plugin surface | Not part of current plugin contract |
+| Pin and unpin | Trimmed from plugin surface | Not part of current plugin contract |
 
 ## Acceptance Criteria For V1
 

@@ -91,14 +91,7 @@ export const transportTargetSchema = z.record(z.string(), z.string());
 
 export const transportActionSchema = z.object({
   actionId: z.string(),
-  kind: z.enum([
-    "message.send",
-    "reaction.set",
-    "typing.set",
-    "message.pin",
-    "message.unpin",
-    "file.download.request",
-  ]),
+  kind: z.enum(["message.send", "file.download.request"]),
   idempotencyKey: z.string(),
   accountId: z.string(),
   targetScope: z.enum(["dm", "group", "topic"]).optional(),
@@ -220,39 +213,6 @@ export const transportMessageReceivedEventSchema = z.object({
   }),
 });
 
-const transportConversationPayloadSchema = z.object({
-  eventId: z.string(),
-  accountId: z.string(),
-  cursor: z.string().optional(),
-  targetScope: z.enum(["dm", "group", "topic"]).optional(),
-  conversation: z.object({
-    handle: z.string().optional(),
-    transportConversationId: z.string().optional(),
-    baseConversationId: z.string().optional(),
-    parentConversationCandidates: z.array(z.string()).optional(),
-  }),
-  thread: z
-    .object({
-      handle: z.string().optional(),
-      threadId: z.string().optional(),
-    })
-    .optional(),
-});
-
-export const transportReactionUpdatedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.reaction.updated"),
-  payload: transportConversationPayloadSchema.extend({
-    message: z.object({
-      transportMessageId: z.string(),
-    }),
-    reaction: z.object({
-      senderId: z.string().optional(),
-      emojis: z.array(z.string()).default([]),
-    }),
-  }),
-});
-
 export const transportDeliveryReceiptEventSchema = z.object({
   type: z.literal("event"),
   eventType: z.literal("transport.delivery.receipt"),
@@ -264,17 +224,6 @@ export const transportDeliveryReceiptEventSchema = z.object({
     status: z.enum(["sent", "delivered", "failed"]),
     code: z.string().optional(),
     message: z.string().optional(),
-  }),
-});
-
-export const transportTypingUpdatedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.typing.updated"),
-  payload: transportConversationPayloadSchema.extend({
-    typing: z.object({
-      senderId: z.string().optional(),
-      active: z.boolean(),
-    }),
   }),
 });
 
@@ -315,9 +264,7 @@ export const controlPlaneEventSchema = z.union([
   transportActionCompletedEventSchema,
   transportActionFailedEventSchema,
   transportMessageReceivedEventSchema,
-  transportReactionUpdatedEventSchema,
   transportDeliveryReceiptEventSchema,
-  transportTypingUpdatedEventSchema,
   transportAccountStatusEventSchema,
   transportCapabilitiesUpdatedEventSchema,
   protocolErrorSchema,

@@ -46,8 +46,8 @@ plugin repository.
 ## Step 5. Add delivery and capability gating
 
 - implement outbound text send and inbound text receive flow
-- capability-gate edit, delete, reaction, typing, poll, topic, callback, and
-  approval-native actions
+- capability-gate optional actions such as downloads and approval-native
+  delivery, while leaving trimmed transport features out of the plugin surface
 - derive shared `message` tool actions from current account and target
   capabilities instead of stale caches
 

@@ -74,10 +74,7 @@ function startMockRelay(options: MockRelayOptions = {}) {
             },
             optionalCapabilities: options.capabilities?.optionalCapabilities ?? {},
             providerCapabilities: options.capabilities?.providerCapabilities ?? {},
-            targetCapabilities: options.capabilities?.targetCapabilities ?? {
-              dm: { typing: false },
-              group: { typing: true },
-            },
+            targetCapabilities: options.capabilities?.targetCapabilities ?? {},
             limits: {
               maxUploadBytes: 1024,
               maxCaptionBytes: 100,
@@ -516,16 +513,12 @@ describe("relay channel plugin", () => {
     expect(download.downloadUrl).toBe("http://127.0.0.1:43129/downloads/download-1");
   });
 
-  it("gates message-tool actions by target capabilities", async () => {
+  it("describes only remaining optional message-tool actions", async () => {
     const relay = startMockRelay({
       capabilities: {
         optionalCapabilities: {
-          typing: true,
+          fileDownloads: true,
           nativeApprovalDelivery: true,
-        },
-        targetCapabilities: {
-          dm: { typing: false },
-          group: { typing: true },
         },
       },
     });
@@ -537,8 +530,11 @@ describe("relay channel plugin", () => {
     });
     await plugin.gateway.startAccount("default");
 
-    expect(plugin.actions.describeMessageTool("default", "dm").actions).not.toContain("typing");
-    expect(plugin.actions.describeMessageTool("default", "group").actions).toContain("typing");
+    expect(plugin.actions.describeMessageTool("default", "group").actions).toEqual([
+      "send",
+      "download",
+      "approval_native_delivery",
+    ]);
   });
 
   it("uses loopback data-plane tokens for file transfer", () => {
@@ -620,19 +616,11 @@ describe("relay channel plugin", () => {
           ws.send(
             JSON.stringify({
               type: "event",
-              eventType: "transport.reaction.updated",
+              eventType: "transport.delivery.receipt",
               payload: {
-                eventId: "evt-2",
                 accountId: "default",
-                conversation: {
-                  handle: "-100123",
-                },
-                message: {
-                  transportMessageId: "2002",
-                },
-                reaction: {
-                  emojis: ["👍"],
-                },
+                transportMessageId: "2002",
+                status: "delivered",
               },
             })
           );
@@ -651,7 +639,7 @@ describe("relay channel plugin", () => {
 
     await plugin.gateway.startAccount("default");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(seenEvents).toEqual([{ eventType: "transport.reaction.updated" }]);
+    expect(seenEvents).toEqual([{ eventType: "transport.delivery.receipt" }]);
   });
 
   it("keeps security and approvals plugin-owned", async () => {
