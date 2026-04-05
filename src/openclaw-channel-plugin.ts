@@ -17,6 +17,7 @@ import { RelayAccountRuntime } from "./account-runtime.js";
 import { parseRelayChannelPluginConfig, relayChannelPluginConfigSchema, resolveAccountConfig } from "./config.js";
 import { describeMessageTool } from "./message-actions.js";
 import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
+import { logRuntimeEvent } from "./runtime-log.js";
 import { inspectRelaySetup } from "./setup.js";
 import { RelayStatusRegistry } from "./status.js";
 import {
@@ -95,6 +96,86 @@ function mapRelayScopeToChatType(scope?: "dm" | "group" | "topic") {
 
 function normalizeThreadId(threadId: string | number | null | undefined) {
   return threadId !== undefined && threadId !== null ? String(threadId) : null;
+}
+
+function countInlineButtonRows(
+  rows: ReadonlyArray<ReadonlyArray<{ text: string; callback_data: string }>> | undefined
+) {
+  return rows?.length ?? 0;
+}
+
+function countInlineButtons(
+  rows: ReadonlyArray<ReadonlyArray<{ text: string; callback_data: string }>> | undefined
+) {
+  return rows?.reduce((total, row) => total + row.length, 0) ?? 0;
+}
+
+function countInteractiveBlocks(interactive: unknown) {
+  return isRecord(interactive) && Array.isArray(interactive.blocks) ? interactive.blocks.length : 0;
+}
+
+function listInteractiveBlockTypes(interactive: unknown) {
+  if (!isRecord(interactive) || !Array.isArray(interactive.blocks)) {
+    return [];
+  }
+  return interactive.blocks
+    .map((block) => (isRecord(block) && typeof block.type === "string" ? block.type : null))
+    .filter((value): value is string => Boolean(value));
+}
+
+function summarizeResolvedTarget(target: {
+  to: string;
+  transportTarget?: Record<string, string>;
+  kind?: string;
+  threadId?: string | null;
+}) {
+  return {
+    to: target.to,
+    kind: target.kind ?? null,
+    transportChannel: target.transportTarget?.channel ?? null,
+    transportChatId: target.transportTarget?.chatId ?? null,
+    threadId: target.threadId ?? null,
+  };
+}
+
+function summarizeOutboundPayload(input: {
+  payload: any;
+  telegramChannelData: Record<string, unknown> | null;
+  buttons: ReadonlyArray<ReadonlyArray<{ text: string; callback_data: string }>> | undefined;
+  replyMarkup: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } | undefined;
+  text: string;
+}) {
+  const { payload, telegramChannelData, buttons, replyMarkup, text } = input;
+  return {
+    textLength: text.length,
+    hasMediaUrl: typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0,
+    hasInteractive: Boolean(payload?.interactive),
+    interactiveBlockCount: countInteractiveBlocks(payload?.interactive),
+    interactiveBlockTypes: listInteractiveBlockTypes(payload?.interactive),
+    hasPayloadButtons: Array.isArray(payload?.buttons),
+    payloadButtonRows: Array.isArray(payload?.buttons) ? payload.buttons.length : 0,
+    hasChannelButtons: Array.isArray(telegramChannelData?.buttons),
+    channelButtonRows: Array.isArray(telegramChannelData?.buttons) ? telegramChannelData.buttons.length : 0,
+    normalizedButtonRows: countInlineButtonRows(buttons),
+    normalizedButtonCount: countInlineButtons(buttons),
+    hasReplyMarkup: Boolean(replyMarkup),
+  };
+}
+
+function summarizeMessageActionParams(params: Record<string, unknown>) {
+  return {
+    hasTarget: typeof params.target === "string" && params.target.trim().length > 0,
+    hasTo: typeof params.to === "string" && params.to.trim().length > 0,
+    hasQuestion:
+      typeof params.question === "string" || typeof params.pollQuestion === "string",
+    hasPollOptions: Array.isArray(params.answers) || Array.isArray(params.pollOption),
+    hasMessage:
+      typeof params.message === "string" || typeof params.content === "string",
+    hasTransportMessageId:
+      typeof params.messageId === "string" ||
+      typeof params.messageId === "number" ||
+      typeof params.transportMessageId === "string",
+  };
 }
 
 function buildReplyMarkup(
@@ -574,6 +655,20 @@ export const relayChannelOpenclawPlugin = {
       const snapshot = runtime.getCapabilitySnapshot();
       const discovery = describeMessageTool(snapshot);
       const actionAllowlist = new Set(["send", "poll", "react", "edit", "delete", "pin"]);
+      logRuntimeEvent("info", "describeMessageTool resolved", {
+        accountId: resolvePluginAccountId(cfg, accountId),
+        transportProvider: snapshot?.transport.provider ?? null,
+        actions: discovery.actions.filter((action) => actionAllowlist.has(action)),
+        capabilities: Array.isArray(discovery.capabilities) ? discovery.capabilities : [],
+        schemaProperties: Array.isArray(discovery.schema)
+          ? discovery.schema.flatMap((entry) => {
+              if (!isRecord(entry) || !isRecord(entry.properties)) {
+                return [];
+              }
+              return Object.keys(entry.properties);
+            })
+          : [],
+      });
       return {
         actions: discovery.actions.filter((action) => actionAllowlist.has(action)),
         ...(Array.isArray(discovery.capabilities) && discovery.capabilities.length > 0
@@ -592,6 +687,13 @@ export const relayChannelOpenclawPlugin = {
       const { target, explicitThreadId } = readMessageActionTarget({
         rawParams: params,
         toolContext,
+      });
+      logRuntimeEvent("info", "handleAction dispatch", {
+        accountId: resolvePluginAccountId(cfg, accountId),
+        action,
+        target: summarizeResolvedTarget(target),
+        explicitThreadId: explicitThreadId ?? null,
+        params: summarizeMessageActionParams(params),
       });
 
       if (action === "poll") {
@@ -732,13 +834,30 @@ export const relayChannelOpenclawPlugin = {
         isRecord(payload?.channelData) && isRecord(payload.channelData.telegram)
           ? payload.channelData.telegram
           : null;
-      const buttons = readTelegramInlineButtons(telegramChannelData?.buttons, payload?.interactive);
+      const buttons = readTelegramInlineButtons(
+        telegramChannelData?.buttons ?? payload?.buttons,
+        payload?.interactive
+      );
       const replyMarkup = buildReplyMarkup(buttons);
       const text =
         resolveInteractiveTextFallback({
           text: typeof payload?.text === "string" ? payload.text : undefined,
           interactive: payload?.interactive,
         }) ?? "";
+      logRuntimeEvent("info", "sendPayload resolved", {
+        accountId: resolvePluginAccountId(cfg, accountId),
+        target: summarizeResolvedTarget(target),
+        explicitThreadId: explicitThreadId ?? null,
+        replyToId: replyToId ?? null,
+        forceDocument: forceDocument === true,
+        payload: summarizeOutboundPayload({
+          payload,
+          telegramChannelData,
+          buttons,
+          replyMarkup,
+          text,
+        }),
+      });
       const result = await runtime.sendAction({
         kind: "message.send",
         target,

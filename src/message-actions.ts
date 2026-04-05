@@ -42,6 +42,7 @@ function hasCapability(
 
 function createMessageToolButtonsSchemaFragment(): JsonValue {
   return {
+    visibility: "all-configured",
     properties: {
       buttons: createMessageToolButtonsSchema() as unknown as JsonValue,
     },

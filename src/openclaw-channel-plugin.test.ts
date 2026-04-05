@@ -269,28 +269,29 @@ describe("relayChannelOpenclawPlugin", () => {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "buttons", url: `ws://127.0.0.1:${port}` }],
+          accounts: [{ id: "shared-buttons", url: `ws://127.0.0.1:${port}` }],
         },
       },
     };
     const controller = new AbortController();
     const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
       cfg: runtimeCfg as never,
-      accountId: "buttons",
-      account: { accountId: "buttons" } as never,
+      accountId: "shared-buttons",
+      account: { accountId: "shared-buttons" } as never,
       abortSignal: controller.signal,
     } as never);
 
-    await waitForHealthy(runtimeCfg, "buttons");
+    await waitForHealthy(runtimeCfg, "shared-buttons");
 
     const description = relayChannelOpenclawPlugin.actions?.describeMessageTool({
       cfg: runtimeCfg as never,
-      accountId: "buttons",
+      accountId: "shared-buttons",
     } as never);
     expect(description).toMatchObject({
       capabilities: ["interactive", "buttons"],
       schema: [
         {
+          visibility: "all-configured",
           properties: {
             buttons: {
               type: "array",
@@ -318,7 +319,7 @@ describe("relayChannelOpenclawPlugin", () => {
           ],
         },
       },
-      accountId: "buttons",
+      accountId: "shared-buttons",
     } as never);
 
     expect(seenActions[0]).toMatchObject({
@@ -340,8 +341,96 @@ describe("relayChannelOpenclawPlugin", () => {
     await startTask;
     await relayChannelOpenclawPlugin.gateway!.stopAccount({
       cfg: runtimeCfg as never,
-      accountId: "buttons",
-      account: { accountId: "buttons" } as never,
+      accountId: "shared-buttons",
+      account: { accountId: "shared-buttons" } as never,
+    } as never);
+  });
+
+  it("routes shared message-tool buttons through relay message.send with replyMarkup", async () => {
+    const seenActions: Array<{
+      kind: string;
+      payload: Record<string, unknown>;
+    }> = [];
+    const port = startMockRelay({
+      optionalCapabilities: {
+        "telegram.inlineButtons": true,
+      },
+      onAction(frame, ws) {
+        seenActions.push({
+          kind: frame.action.kind,
+          payload: frame.action.payload,
+        });
+        ws.send(
+          JSON.stringify({
+            type: "event",
+            eventType: "transport.action.completed",
+            payload: {
+              requestId: frame.requestId,
+              actionId: frame.action.actionId,
+              result: {
+                transportMessageId: "msg-2",
+                conversationId: "telegram:123",
+              },
+            },
+          })
+        );
+      },
+    });
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          accounts: [{ id: "shared-buttons-raw", url: `ws://127.0.0.1:${port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
+      cfg: runtimeCfg as never,
+      accountId: "shared-buttons-raw",
+      account: { accountId: "shared-buttons-raw" } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, "shared-buttons-raw");
+
+    await relayChannelOpenclawPlugin.outbound!.sendPayload?.({
+      cfg: runtimeCfg as never,
+      to: "telegram:123",
+      text: "ignored",
+      payload: {
+        text: "Choose one",
+        buttons: [
+          [
+            { text: "Approve", callback_data: "approve" },
+            { text: "Reject", callback_data: "reject" },
+          ],
+        ],
+      },
+      accountId: "shared-buttons-raw",
+    } as never);
+
+    expect(seenActions[0]).toMatchObject({
+      kind: "message.send",
+      payload: {
+        text: "Choose one",
+        replyMarkup: {
+          inline_keyboard: [
+            [
+              { text: "Approve", callback_data: "approve" },
+              { text: "Reject", callback_data: "reject" },
+            ],
+          ],
+        },
+      },
+    });
+
+    controller.abort();
+    await startTask;
+    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+      cfg: runtimeCfg as never,
+      accountId: "shared-buttons-raw",
+      account: { accountId: "shared-buttons-raw" } as never,
     } as never);
   });
 
