@@ -75,13 +75,8 @@ export type RelayActionKind =
   | "message.delete"
   | "reaction.set"
   | "typing.set"
-  | "poll.send"
   | "message.pin"
   | "message.unpin"
-  | "topic.create"
-  | "topic.edit"
-  | "topic.close"
-  | "callback.answer"
   | "file.download.request";
 
 export type RelayActionPayload = {
@@ -208,9 +203,6 @@ export type RelayTransportEvent = {
     | "transport.message.edited"
     | "transport.message.deleted"
     | "transport.reaction.updated"
-    | "transport.callback.received"
-    | "transport.poll.updated"
-    | "transport.topic.updated"
     | "transport.delivery.receipt"
     | "transport.typing.updated";
   payload: Record<string, JsonValue>;
@@ -327,13 +319,6 @@ export type ChatChannelPlugin = {
       chatAction?: string;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
-    sendPoll(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      question: string;
-      options: string[];
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
     pinMessage(input: {
       accountId: string;
       target: RelayResolvedTarget;
@@ -345,33 +330,6 @@ export type ChatChannelPlugin = {
       accountId: string;
       target: RelayResolvedTarget;
       transportMessageId?: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    createTopic(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      name: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    editTopic(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      threadId: string;
-      name?: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    closeTopic(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      threadId: string;
-      idempotencyKey?: string;
-    }): Promise<RelayActionSuccess>;
-    answerCallback(input: {
-      accountId: string;
-      target: RelayResolvedTarget;
-      callbackQueryId: string;
-      text?: string;
-      showAlert?: boolean;
       idempotencyKey?: string;
     }): Promise<RelayActionSuccess>;
     requestFileDownload(input: {

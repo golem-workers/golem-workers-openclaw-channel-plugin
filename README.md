@@ -17,10 +17,10 @@ focused contract tests.
 - canonical target resolution, session routing, outbound route building, and
   stateless handle-based routing helpers
 - outbound text/media send plus capability-gated edit, delete, reaction,
-  typing, poll, pin, topic, callback-answer, and file-download request actions
+  typing, pin, and file-download request actions
 - capability-gated shared message-tool action discovery
 - transport-level event decoding for inbound message edits/deletes, reactions,
-  callbacks, polls, topic updates, delivery receipts, and typing updates
+  delivery receipts, and typing updates
 - reconnect and duplicate-terminal-event handling tests
 
 ## Project structure
@@ -88,8 +88,7 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 - backend-originated transport events flow through the existing relay push
   ingress as `transport_event`; for Telegram Bot API in this stack, backend
   remains the owner of polling/webhook ingestion and forwards normalized update
-  families such as edited messages, callbacks, reactions, polls, and topic
-  updates to the plugin through relay
+  families such as edited messages and reactions to the plugin through relay
 
 ## Deploy To Agent
 

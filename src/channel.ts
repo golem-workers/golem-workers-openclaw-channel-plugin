@@ -216,18 +216,6 @@ export function createRelayChannelPlugin(
           idempotencyKey: input.idempotencyKey,
         });
       },
-      async sendPoll(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "poll.send",
-          target: input.target,
-          payload: {
-            question: input.question,
-            options: input.options,
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
       async pinMessage(input) {
         const runtime = getRuntime(input.accountId);
         return await runtime.sendAction({
@@ -249,61 +237,6 @@ export function createRelayChannelPlugin(
           target: input.target,
           payload: {
             ...(input.transportMessageId ? { transportMessageId: input.transportMessageId } : {}),
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async createTopic(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "topic.create",
-          target: input.target,
-          payload: {
-            name: input.name,
-          },
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async editTopic(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "topic.edit",
-          target: {
-            ...input.target,
-            threadId: input.threadId,
-          },
-          payload: {
-            threadId: input.threadId,
-            ...(input.name ? { name: input.name } : {}),
-          },
-          explicitThreadId: input.threadId,
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async closeTopic(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "topic.close",
-          target: {
-            ...input.target,
-            threadId: input.threadId,
-          },
-          payload: {
-            threadId: input.threadId,
-          },
-          explicitThreadId: input.threadId,
-          idempotencyKey: input.idempotencyKey,
-        });
-      },
-      async answerCallback(input) {
-        const runtime = getRuntime(input.accountId);
-        return await runtime.sendAction({
-          kind: "callback.answer",
-          target: input.target,
-          payload: {
-            callbackQueryId: input.callbackQueryId,
-            ...(input.text ? { text: input.text } : {}),
-            ...(input.showAlert !== undefined ? { showAlert: input.showAlert } : {}),
           },
           idempotencyKey: input.idempotencyKey,
         });

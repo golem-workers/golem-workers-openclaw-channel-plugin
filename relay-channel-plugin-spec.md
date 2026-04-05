@@ -251,7 +251,7 @@ Required OpenClaw-facing surfaces:
 - `threading`: reply mode, auto-thread selection, and transport reply behavior
 - `actions.describeMessageTool(...)`: advertise shared `message` tool actions
   from negotiated capabilities
-- `outbound`: translate OpenClaw sends, edits, deletes, polls, reactions, and
+- `outbound`: translate OpenClaw sends, edits, deletes, reactions, and
   typing into relay actions
 - `directory` and target resolution helpers: user-facing lookup, explicit
   targets, display formatting, and fallback target resolution
@@ -298,9 +298,6 @@ These capabilities are additive and must be negotiated explicitly:
 - message delete
 - reactions
 - typing or chat actions
-- polls
-- inline buttons and callback actions
-- forum topic operations
 - admin transport operations such as pin and unpin
 - inbound edited updates
 - inbound reaction updates
@@ -310,13 +307,10 @@ These capabilities are additive and must be negotiated explicitly:
 
 ### Provider-Namespace Capabilities
 
-Telegram-shaped or provider-specific features should live under a namespaced
-capability surface instead of pretending to be universal. Examples:
-
-- `telegram.forumTopics`
-- `telegram.inlineButtons`
-- `telegram.callbackAnswer`
-- `slack.blocks`
+Provider-specific features should live under a namespaced capability surface
+instead of pretending to be universal. This trimmed transport surface no longer
+depends on Telegram-specific button, callback-answer, or forum-topic
+capabilities. `slack.blocks` remains an example of a provider extension.
 
 ### Capability Rules
 
@@ -475,7 +469,6 @@ The plugin dials the relay and sends a client hello:
       "messageDelete",
       "reactions",
       "typing",
-      "polls",
       "fileDownloads"
     ]
   }
@@ -506,17 +499,12 @@ The relay responds:
     "messageDelete": true,
     "reactions": true,
     "typing": true,
-    "polls": true,
     "pinning": true,
     "fileDownloads": true,
     "editedUpdates": true,
     "reactionUpdates": true
   },
-  "providerCapabilities": {
-    "telegram.inlineButtons": true,
-    "telegram.forumTopics": true,
-    "telegram.callbackAnswer": true
-  },
+  "providerCapabilities": {},
   "limits": {
     "maxUploadBytes": 52428800,
     "maxCaptionBytes": 4096,
@@ -527,11 +515,7 @@ The relay responds:
       "typing": true
     },
     "group": {
-      "typing": true,
-      "polls": true
-    },
-    "topic": {
-      "telegram.forumTopics": true
+      "typing": true
     }
   },
   "dataPlane": {
@@ -575,13 +559,8 @@ Base action categories:
 - `message.delete`
 - `reaction.set`
 - `typing.set`
-- `poll.send`
 - `message.pin`
 - `message.unpin`
-- `topic.create`
-- `topic.edit`
-- `topic.close`
-- `callback.answer`
 - `file.download.request`
 
 Each action carries:
@@ -721,9 +700,6 @@ Core inbound event families:
 - `transport.message.edited`
 - `transport.message.deleted`
 - `transport.reaction.updated`
-- `transport.callback.received`
-- `transport.poll.updated`
-- `transport.topic.updated`
 - `transport.delivery.receipt`
 - `transport.typing.updated`
 - `transport.capabilities.updated`
@@ -934,21 +910,7 @@ download URL or fetch token for the data plane.
 
 This avoids forcing every inbound event to carry raw file bytes.
 
-## Buttons And Callback Actions
-
-Telegram-class UX requires structured message actions.
-
-The relay protocol should support:
-
-- outbound inline buttons
-- inbound callback presses
-- callback acknowledgements
-- callback payload correlation to the source transport message
-
-The plugin remains responsible for mapping those actions into OpenClaw channel
-action semantics.
-
-## Reactions, Typing, Polls, And Admin Operations
+## Reactions, Typing, And Admin Operations
 
 These are transport features, not auth features, so they belong in the v1 spec.
 
@@ -957,10 +919,7 @@ The relay protocol should support:
 - setting or clearing reactions
 - inbound reaction updates
 - starting and stopping typing indicators or chat actions
-- sending polls
-- receiving poll state updates
 - pin and unpin style transport admin actions
-- forum topic create, update, close, or reopen when supported
 
 All such operations must be capability-gated.
 
@@ -983,7 +942,6 @@ Relay-owned state may include:
 - upload staging state
 - provider rate-limit backoff state
 - provider-specific event cursors
-- short-lived callback correlation windows
 
 This implementation intentionally does not keep durable plugin-owned transport
 state across reconnects.
@@ -1182,7 +1140,7 @@ my-relay-channel/
 - `outbound-session-route.ts`: canonical
   `resolveOutboundSessionRoute(...)`
 - `message-actions.ts`: `actions.describeMessageTool(...)` and action handlers
-- `outbound-adapter.ts`: send, edit, delete, poll, reaction, and typing relay
+- `outbound-adapter.ts`: send, edit, delete, reaction, and typing relay
   actions
 - `file-data-plane.ts`: upload or download token handling and local HTTP helper
   logic
@@ -1385,8 +1343,8 @@ The implementation is done when all of the following are true:
 5. Add canonical session routing, outbound session route building, and thread or
    reply mapping.
 6. Add the data plane for uploads and downloads.
-7. Add media, edits, deletes, reactions, typing, polls, buttons, callback
-   actions, and provider-specific extensions.
+7. Add media, edits, deletes, reactions, typing, pin/unpin, and
+   provider-specific extensions.
 8. Add replay, reconnect, cursor persistence, capability refresh, and
    idempotent retries.
 9. Add future transport-auth extensions only after transport parity is stable.
@@ -1418,9 +1376,7 @@ Minimum v1 conformance should be tracked per account and per target scope.
 | File data plane | Yes | Local upload and download architecture |
 | Edits and deletes | Capability-gated | Optional but formalized |
 | Reactions and typing | Capability-gated | Optional but formalized |
-| Polls | Capability-gated | Optional but formalized |
-| Buttons and callbacks | Capability-gated | Usually provider-specific |
-| Topic operations | Capability-gated | Often Telegram-specific |
+| Pin and unpin | Capability-gated | Optional but formalized |
 
 ## Acceptance Criteria For V1
 
@@ -1438,4 +1394,4 @@ The design is successful if:
   implicit no-op behavior
 - user-facing target resolution remains stable and plugin-owned
 - file upload and download use a dedicated local data plane
-- session routing, replies, and topic behavior remain stable across reconnects
+- session routing and replies remain stable across reconnects

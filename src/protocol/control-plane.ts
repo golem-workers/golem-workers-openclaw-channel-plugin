@@ -97,13 +97,8 @@ export const transportActionSchema = z.object({
     "message.delete",
     "reaction.set",
     "typing.set",
-    "poll.send",
     "message.pin",
     "message.unpin",
-    "topic.create",
-    "topic.edit",
-    "topic.close",
-    "callback.answer",
     "file.download.request",
   ]),
   idempotencyKey: z.string(),
@@ -284,45 +279,6 @@ export const transportReactionUpdatedEventSchema = z.object({
   }),
 });
 
-export const transportCallbackReceivedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.callback.received"),
-  payload: transportConversationPayloadSchema.extend({
-    callback: z.object({
-      callbackQueryId: z.string(),
-      data: z.string().nullable().optional(),
-      fromUserId: z.string().optional(),
-      transportMessageId: z.string().optional(),
-    }),
-  }),
-});
-
-export const transportPollUpdatedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.poll.updated"),
-  payload: transportConversationPayloadSchema.extend({
-    poll: z.object({
-      pollId: z.string(),
-      transportMessageId: z.string().optional(),
-      question: z.string().optional(),
-      totalVoterCount: z.number().int().nonnegative().optional(),
-      isClosed: z.boolean().optional(),
-    }),
-  }),
-});
-
-export const transportTopicUpdatedEventSchema = z.object({
-  type: z.literal("event"),
-  eventType: z.literal("transport.topic.updated"),
-  payload: transportConversationPayloadSchema.extend({
-    topic: z.object({
-      threadId: z.string(),
-      title: z.string().optional(),
-      state: z.enum(["created", "edited", "closed", "reopened"]).optional(),
-    }),
-  }),
-});
-
 export const transportDeliveryReceiptEventSchema = z.object({
   type: z.literal("event"),
   eventType: z.literal("transport.delivery.receipt"),
@@ -388,9 +344,6 @@ export const controlPlaneEventSchema = z.union([
   transportMessageEditedEventSchema,
   transportMessageDeletedEventSchema,
   transportReactionUpdatedEventSchema,
-  transportCallbackReceivedEventSchema,
-  transportPollUpdatedEventSchema,
-  transportTopicUpdatedEventSchema,
   transportDeliveryReceiptEventSchema,
   transportTypingUpdatedEventSchema,
   transportAccountStatusEventSchema,

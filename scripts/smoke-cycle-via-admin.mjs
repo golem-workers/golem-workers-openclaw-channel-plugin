@@ -219,7 +219,6 @@ server.on("connection", (ws) => {
         targetCapabilities: {
           dm: {},
           group: { typing: true },
-          topic: { "telegram.forumTopics": true },
         },
         limits: {
           maxUploadBytes: 1024,

@@ -234,16 +234,13 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
   });
 
-  it("routes interactive send payloads through relay message.send with replyMarkup", async () => {
+  it("handles send action through relay message.send", async () => {
     const seenActions: Array<{
       kind: string;
       payload: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
     const port = startMockRelay({
-      optionalCapabilities: {
-        "telegram.inlineButtons": true,
-      },
       onAction(frame, ws) {
         seenActions.push({
           kind: frame.action.kind,
@@ -258,7 +255,7 @@ describe("relayChannelOpenclawPlugin", () => {
               requestId: frame.requestId,
               actionId: frame.action.actionId,
               result: {
-                transportMessageId: "msg-1",
+                transportMessageId: "msg-send-action",
                 conversationId: "telegram:123",
               },
             },
@@ -270,71 +267,46 @@ describe("relayChannelOpenclawPlugin", () => {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "shared-buttons", url: `ws://127.0.0.1:${port}` }],
+          accounts: [{ id: "send-action", url: `ws://127.0.0.1:${port}` }],
         },
       },
     };
     const controller = new AbortController();
     const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
       cfg: runtimeCfg as never,
-      accountId: "shared-buttons",
-      account: { accountId: "shared-buttons" } as never,
+      accountId: "send-action",
+      account: { accountId: "send-action" } as never,
       abortSignal: controller.signal,
     } as never);
 
-    await waitForHealthy(runtimeCfg, "shared-buttons");
+    await waitForHealthy(runtimeCfg, "send-action");
 
-    const description = relayChannelOpenclawPlugin.actions?.describeMessageTool({
-      cfg: runtimeCfg as never,
-      accountId: "shared-buttons",
-    } as never);
-    expect(description).toMatchObject({
-      capabilities: ["interactive", "buttons"],
-      schema: [
-        {
-          visibility: "all-configured",
-          properties: {
-            buttons: {
-              type: "array",
-            },
-          },
-        },
-      ],
-    });
-
-    await relayChannelOpenclawPlugin.outbound!.sendPayload?.({
-      cfg: runtimeCfg as never,
-      to: "telegram:123",
-      text: "ignored",
-      payload: {
-        text: "Choose one",
-        interactive: {
-          blocks: [
-            {
-              type: "buttons",
-              buttons: [
-                { label: "Approve", text: "approve" },
-                { label: "Reject", text: "reject" },
-              ],
-            },
-          ],
-        },
+    const result = await relayChannelOpenclawPlugin.actions!.handleAction({
+      action: "send",
+      params: {
+        target: "telegram:123",
+        message: "Plain relay message",
       },
-      accountId: "shared-buttons",
+      cfg: runtimeCfg as never,
+      accountId: "send-action",
+      toolContext: {},
     } as never);
 
+    expect(result).toMatchObject({
+      details: {
+        ok: true,
+        conversationId: "telegram:123",
+        messageId: "msg-send-action",
+      },
+    });
     expect(seenActions[0]).toMatchObject({
       kind: "message.send",
       payload: {
-        text: "Choose one",
-        replyMarkup: {
-          inline_keyboard: [
-            [
-              { text: "Approve", callback_data: "approve" },
-              { text: "Reject", callback_data: "reject" },
-            ],
-          ],
-        },
+        text: "Plain relay message",
+      },
+      transportTarget: {
+        channel: "telegram",
+        chatId: "123",
       },
     });
 
@@ -342,96 +314,8 @@ describe("relayChannelOpenclawPlugin", () => {
     await startTask;
     await relayChannelOpenclawPlugin.gateway!.stopAccount({
       cfg: runtimeCfg as never,
-      accountId: "shared-buttons",
-      account: { accountId: "shared-buttons" } as never,
-    } as never);
-  });
-
-  it("routes shared message-tool buttons through relay message.send with replyMarkup", async () => {
-    const seenActions: Array<{
-      kind: string;
-      payload: Record<string, unknown>;
-    }> = [];
-    const port = startMockRelay({
-      optionalCapabilities: {
-        "telegram.inlineButtons": true,
-      },
-      onAction(frame, ws) {
-        seenActions.push({
-          kind: frame.action.kind,
-          payload: frame.action.payload,
-        });
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "msg-2",
-                conversationId: "telegram:123",
-              },
-            },
-          })
-        );
-      },
-    });
-    const runtimeCfg = {
-      channels: {
-        "relay-channel": {
-          enabled: true,
-          accounts: [{ id: "shared-buttons-raw", url: `ws://127.0.0.1:${port}` }],
-        },
-      },
-    };
-    const controller = new AbortController();
-    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
-      cfg: runtimeCfg as never,
-      accountId: "shared-buttons-raw",
-      account: { accountId: "shared-buttons-raw" } as never,
-      abortSignal: controller.signal,
-    } as never);
-
-    await waitForHealthy(runtimeCfg, "shared-buttons-raw");
-
-    await relayChannelOpenclawPlugin.outbound!.sendPayload?.({
-      cfg: runtimeCfg as never,
-      to: "telegram:123",
-      text: "ignored",
-      payload: {
-        text: "Choose one",
-        buttons: [
-          [
-            { text: "Approve", callback_data: "approve" },
-            { text: "Reject", callback_data: "reject" },
-          ],
-        ],
-      },
-      accountId: "shared-buttons-raw",
-    } as never);
-
-    expect(seenActions[0]).toMatchObject({
-      kind: "message.send",
-      payload: {
-        text: "Choose one",
-        replyMarkup: {
-          inline_keyboard: [
-            [
-              { text: "Approve", callback_data: "approve" },
-              { text: "Reject", callback_data: "reject" },
-            ],
-          ],
-        },
-      },
-    });
-
-    controller.abort();
-    await startTask;
-    await relayChannelOpenclawPlugin.gateway!.stopAccount({
-      cfg: runtimeCfg as never,
-      accountId: "shared-buttons-raw",
-      account: { accountId: "shared-buttons-raw" } as never,
+      accountId: "send-action",
+      account: { accountId: "send-action" } as never,
     } as never);
   });
 
@@ -442,9 +326,6 @@ describe("relayChannelOpenclawPlugin", () => {
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
     const port = startMockRelay({
-      optionalCapabilities: {
-        "telegram.inlineButtons": true,
-      },
       onAction(frame, ws) {
         seenActions.push({
           kind: frame.action.kind,
@@ -512,11 +393,10 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
   });
 
-  it("executes poll, edit, and delete actions through relay transport", async () => {
+  it("executes edit and delete actions through relay transport", async () => {
     const seenActions: Array<{ kind: string; payload: Record<string, unknown> }> = [];
     const port = startMockRelay({
       optionalCapabilities: {
-        polls: true,
         messageEdit: true,
         messageDelete: true,
       },
@@ -560,22 +440,6 @@ describe("relayChannelOpenclawPlugin", () => {
 
     await relayChannelOpenclawPlugin.actions!.handleAction?.({
       channel: "relay-channel",
-      action: "poll",
-      cfg: runtimeCfg as never,
-      params: {
-        target: "gateway-client",
-        channel: "telegram",
-        pollQuestion: "Gateway poll?",
-        pollOption: ["yes", "no"],
-      },
-      accountId: "actions",
-      toolContext: {
-        currentChannelId: "123",
-        currentChannelProvider: "telegram",
-      },
-    } as never);
-    await relayChannelOpenclawPlugin.actions!.handleAction?.({
-      channel: "relay-channel",
       action: "edit",
       cfg: runtimeCfg as never,
       params: {
@@ -597,13 +461,6 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
 
     expect(seenActions).toEqual([
-      {
-        kind: "poll.send",
-        payload: {
-          question: "Gateway poll?",
-          options: ["yes", "no"],
-        },
-      },
       {
         kind: "message.edit",
         payload: {

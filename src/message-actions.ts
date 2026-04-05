@@ -1,5 +1,4 @@
-import { createMessageToolButtonsSchema } from "openclaw/plugin-sdk/channel-actions";
-import type { JsonValue, RelayCapabilitySnapshot, RelayMessageToolDescription } from "../api.js";
+import type { RelayCapabilitySnapshot, RelayMessageToolDescription } from "../api.js";
 import { OPTIONAL_CAPABILITY_TO_ACTION } from "./types.js";
 
 export function describeMessageTool(
@@ -17,12 +16,8 @@ export function describeMessageTool(
     }
   }
 
-  const buttonsEnabled = hasCapability(capabilities, "telegram.inlineButtons", scope);
-  const schema = buttonsEnabled ? [createMessageToolButtonsSchemaFragment()] : undefined;
   return {
     actions: [...new Set(actions)],
-    ...(buttonsEnabled ? { capabilities: ["interactive", "buttons"] } : {}),
-    ...(schema ? { schema } : {}),
   };
 }
 
@@ -38,13 +33,4 @@ function hasCapability(
     capabilities.optionalCapabilities[capability] ??
       capabilities.providerCapabilities[capability]
   );
-}
-
-function createMessageToolButtonsSchemaFragment(): JsonValue {
-  return {
-    visibility: "all-configured",
-    properties: {
-      buttons: createMessageToolButtonsSchema() as unknown as JsonValue,
-    },
-  };
 }

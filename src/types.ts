@@ -17,12 +17,8 @@ export const OPTIONAL_CAPABILITY_TO_ACTION: Record<string, string> = {
   messageDelete: "delete",
   reactions: "react",
   typing: "typing",
-  polls: "poll",
   pinning: "pin",
   fileDownloads: "download",
-  "telegram.inlineButtons": "buttons",
-  "telegram.forumTopics": "topics",
-  "telegram.callbackAnswer": "callback_answer",
   nativeApprovalDelivery: "approval_native_delivery",
 };
 

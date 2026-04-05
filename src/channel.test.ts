@@ -76,8 +76,7 @@ function startMockRelay(options: MockRelayOptions = {}) {
             providerCapabilities: options.capabilities?.providerCapabilities ?? {},
             targetCapabilities: options.capabilities?.targetCapabilities ?? {
               dm: { typing: false },
-              group: { typing: true, polls: true },
-              topic: { "telegram.forumTopics": true },
+              group: { typing: true },
             },
             limits: {
               maxUploadBytes: 1024,
@@ -540,12 +539,11 @@ describe("relay channel plugin", () => {
       capabilities: {
         optionalCapabilities: {
           typing: true,
-          polls: true,
           nativeApprovalDelivery: true,
         },
         targetCapabilities: {
           dm: { typing: false },
-          group: { typing: true, polls: true },
+          group: { typing: true },
         },
       },
     });
@@ -559,7 +557,6 @@ describe("relay channel plugin", () => {
 
     expect(plugin.actions.describeMessageTool("default", "dm").actions).not.toContain("typing");
     expect(plugin.actions.describeMessageTool("default", "group").actions).toContain("typing");
-    expect(plugin.actions.describeMessageTool("default", "group").actions).toContain("poll");
   });
 
   it("uses loopback data-plane tokens for file transfer", () => {
