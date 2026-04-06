@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { WebSocketServer } from "ws";
+import { createServer, type Server } from "node:http";
+import { closeAllRelayEventIngressServersForTest } from "./event-ingress.js";
 import { relayChannelOpenclawPlugin } from "./openclaw-channel-plugin.js";
 
 const cfg = {
@@ -11,21 +12,15 @@ const cfg = {
   },
 };
 
-const servers: WebSocketServer[] = [];
+const servers: Server[] = [];
 
 afterEach(async () => {
+  await closeAllRelayEventIngressServersForTest();
   await Promise.all(
     servers.splice(0).map(
       (server) =>
-        new Promise<void>((resolve, reject) => {
-          for (const client of server.clients) {
-            client.terminate();
-          }
-          server.close((error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
+        new Promise<void>((resolve) => {
+          server.close(() => {
             resolve();
           });
         })
@@ -33,106 +28,120 @@ afterEach(async () => {
   );
 });
 
-function startMockRelay(options?: {
+async function startMockRelay(options?: {
   optionalCapabilities?: Record<string, boolean>;
   providerCapabilities?: Record<string, boolean>;
-  onAction?: (
-    frame: {
-      type: "request";
-      requestType: "transport.action";
-      requestId: string;
-      action: {
-        actionId: string;
-        kind: string;
-        payload: Record<string, unknown>;
-        transportTarget?: { channel?: string; chatId?: string };
-      };
-    },
-    ws: Parameters<NonNullable<WebSocketServer["clients"]["values"]>["next"]>[0]
-  ) => void;
+  onAction?: (frame: {
+    type: "request";
+    requestType: "transport.action";
+    requestId: string;
+    action: {
+      actionId: string;
+      kind: string;
+      payload: Record<string, unknown>;
+      transportTarget?: { channel?: string; chatId?: string };
+    };
+  }) => Record<string, unknown>;
 }) {
   let connectionCount = 0;
-  const wss = new WebSocketServer({ port: 0 });
-  servers.push(wss);
-  wss.on("connection", (ws) => {
-    connectionCount += 1;
-    ws.on("message", (raw) => {
-      const frame = JSON.parse(raw.toString()) as {
-        type?: string;
-        accountId?: string;
-        requestType?: string;
-        requestId?: string;
-        action?: {
-          actionId?: string;
-          kind?: string;
-          payload?: Record<string, unknown>;
-          transportTarget?: { channel?: string; chatId?: string };
-        };
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const frame = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as {
+      type?: string;
+      accountId?: string;
+      requestType?: string;
+      requestId?: string;
+      action?: {
+        actionId?: string;
+        kind?: string;
+        payload?: Record<string, unknown>;
+        transportTarget?: { channel?: string; chatId?: string };
       };
-      if (frame.type === "hello") {
-        ws.send(
-          JSON.stringify({
-            type: "hello",
-            protocolVersion: 1,
-            role: "local-relay",
-            relayInstanceId: "relay-1",
-            accountId: frame.accountId ?? "default",
-            transport: {
-              provider: "telegram",
-              providerVersion: "bot-api-compatible",
-            },
-            coreCapabilities: {
-              messageSend: true,
-              mediaSend: true,
-              inboundMessages: true,
-              replyTo: true,
-              threadRouting: true,
-            },
-            optionalCapabilities: {
-              fileDownloads: true,
-              ...(options?.optionalCapabilities ?? {}),
-            },
-            providerCapabilities: options?.providerCapabilities ?? {},
-            limits: {},
-            dataPlane: {
-              uploadBaseUrl: "http://127.0.0.1:43129/uploads",
-              downloadBaseUrl: "http://127.0.0.1:43129/downloads",
-            },
-          })
-        );
-        return;
-      }
-      if (frame.type === "request" && frame.requestType === "transport.action" && frame.requestId && frame.action) {
-        options?.onAction?.(
-          frame as {
-            type: "request";
-            requestType: "transport.action";
-            requestId: string;
-            action: {
-              actionId: string;
-              kind: string;
-              payload: Record<string, unknown>;
-              transportTarget?: { channel?: string; chatId?: string };
-            };
+    };
+    if (req.method === "POST" && req.url === "/hello") {
+      connectionCount += 1;
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          type: "hello",
+          protocolVersion: 1,
+          role: "local-relay",
+          relayInstanceId: "relay-1",
+          accountId: frame.accountId ?? "default",
+          transport: {
+            provider: "telegram",
+            providerVersion: "bot-api-compatible",
           },
-          ws
-        );
-      }
-    });
+          coreCapabilities: {
+            messageSend: true,
+            mediaSend: true,
+            inboundMessages: true,
+            replyTo: true,
+            threadRouting: true,
+          },
+          optionalCapabilities: {
+            fileDownloads: true,
+            ...(options?.optionalCapabilities ?? {}),
+          },
+          providerCapabilities: options?.providerCapabilities ?? {},
+          limits: {},
+          dataPlane: {
+            uploadBaseUrl: "http://127.0.0.1:43129/uploads",
+            downloadBaseUrl: "http://127.0.0.1:43129/downloads",
+          },
+        })
+      );
+      return;
+    }
+    if (req.method === "POST" && req.url === "/actions" && frame.requestId && frame.action) {
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify(
+          options?.onAction?.(
+            frame as {
+              type: "request";
+              requestType: "transport.action";
+              requestId: string;
+              action: {
+                actionId: string;
+                kind: string;
+                payload: Record<string, unknown>;
+                transportTarget?: { channel?: string; chatId?: string };
+              };
+            }
+          ) ?? {
+            type: "event",
+            eventType: "transport.action.completed",
+            payload: {
+              requestId: frame.requestId,
+              actionId: frame.action.actionId,
+              result: {
+                transportMessageId: "default-action",
+                conversationId: "telegram:123",
+              },
+            },
+          }
+        )
+      );
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
   });
-
-  const address = wss.address();
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error("Failed to get mock relay address");
   }
   return {
     port: address.port,
     getConnectionCount: () => connectionCount,
-    closeConnection(code?: number, reason?: string) {
-      for (const client of wss.clients) {
-        client.close(code, reason);
-      }
-    },
   };
 }
 
@@ -196,13 +205,13 @@ describe("relayChannelOpenclawPlugin", () => {
   });
 
   it("keeps the gateway account task alive until abort", async () => {
-    const relay = startMockRelay();
+    const relay = await startMockRelay();
     const accountId = "gateway-task";
     const runtimeCfg = {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: accountId, url: `ws://127.0.0.1:${relay.port}` }],
+          accounts: [{ id: accountId, url: `http://127.0.0.1:${relay.port}` }],
         },
       },
     };
@@ -246,16 +255,14 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
   });
 
-  it("keeps degraded relay runtimes running in account snapshots while reconnect is scheduled", async () => {
-    const relay = startMockRelay();
+  it("shows degraded relay runtime when local HTTP action fails", async () => {
+    const relay = await startMockRelay();
     const accountId = "degraded-snapshot";
     const runtimeCfg = {
       channels: {
         "relay-channel": {
           enabled: true,
-          reconnectBackoffMs: 80,
-          maxReconnectBackoffMs: 100,
-          accounts: [{ id: accountId, url: `ws://127.0.0.1:${relay.port}` }],
+          accounts: [{ id: accountId, url: `http://127.0.0.1:${relay.port}` }],
         },
       },
     };
@@ -268,8 +275,11 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
 
     await waitForHealthy(runtimeCfg, accountId);
-    relay.closeConnection(1012, "relay reboot");
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+      cfg: runtimeCfg as never,
+      accountId,
+      account: { accountId } as never,
+    } as never);
 
     expect(
       relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
@@ -278,23 +288,13 @@ describe("relayChannelOpenclawPlugin", () => {
       } as never)
     ).toMatchObject({
       accountId,
-      running: true,
+      running: false,
       connected: false,
-      healthState: "degraded",
-      recovering: true,
-      reconnectScheduled: true,
-      lastCloseCode: 1012,
-      lastCloseReason: "relay reboot",
+      healthState: "stopped",
     });
-    expect(relay.getConnectionCount()).toBe(1);
 
     controller.abort();
     await startTask;
-    await relayChannelOpenclawPlugin.gateway!.stopAccount({
-      cfg: runtimeCfg as never,
-      accountId,
-      account: { accountId } as never,
-    } as never);
   });
 
   it("handles send action through relay message.send", async () => {
@@ -303,34 +303,32 @@ describe("relayChannelOpenclawPlugin", () => {
       payload: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
-    const relay = startMockRelay({
-      onAction(frame, ws) {
+    const relay = await startMockRelay({
+      onAction(frame) {
         seenActions.push({
           kind: frame.action.kind,
           payload: frame.action.payload,
           transportTarget: frame.action.transportTarget,
         });
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "msg-send-action",
-                conversationId: "telegram:123",
-              },
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "msg-send-action",
+              conversationId: "telegram:123",
             },
-          })
-        );
+          },
+        };
       },
     });
     const runtimeCfg = {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "send-action", url: `ws://127.0.0.1:${relay.port}` }],
+          accounts: [{ id: "send-action", url: `http://127.0.0.1:${relay.port}` }],
         },
       },
     };
@@ -388,34 +386,32 @@ describe("relayChannelOpenclawPlugin", () => {
       payload: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
-    const relay = startMockRelay({
-      onAction(frame, ws) {
+    const relay = await startMockRelay({
+      onAction(frame) {
         seenActions.push({
           kind: frame.action.kind,
           payload: frame.action.payload,
           transportTarget: frame.action.transportTarget,
         });
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "msg-implicit",
-                conversationId: "telegram:7278830001",
-              },
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "msg-implicit",
+              conversationId: "telegram:7278830001",
             },
-          })
-        );
+          },
+        };
       },
     });
     const runtimeCfg = {
       channels: {
         "relay-channel": {
           enabled: true,
-          accounts: [{ id: "implicit-targets", url: `ws://127.0.0.1:${relay.port}` }],
+          accounts: [{ id: "implicit-targets", url: `http://127.0.0.1:${relay.port}` }],
         },
       },
     };

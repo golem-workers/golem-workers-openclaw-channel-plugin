@@ -1,8 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import WebSocket from "ws";
 import type {
-  RelayActionFailure,
   RelayAccountStatus,
   RelayActionPayload,
   RelayActionSuccess,
@@ -10,20 +8,13 @@ import type {
   RelayRecoveryState,
 } from "../api.js";
 import {
+  controlPlaneEventSchema,
   helloRequestSchema,
-  parseControlPlaneMessage,
+  helloResponseSchema,
   transportActionRequestSchema,
 } from "./protocol/control-plane.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { REQUIRED_CORE_CAPABILITIES } from "./types.js";
-
-type PendingAction = {
-  actionId: string;
-  resolve: (value: RelayActionSuccess) => void;
-  reject: (reason?: unknown) => void;
-  timeout: ReturnType<typeof setTimeout>;
-  settled: boolean;
-};
 
 export type RelayClientOptions = {
   accountId: string;
@@ -35,166 +26,33 @@ export type RelayClientOptions = {
 };
 
 export class RelayClient extends EventEmitter {
-  private socket: WebSocket | null = null;
-  private reconnectDelayMs: number;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false;
-  private helloResolved = false;
-  private reconnectAttempts = 0;
-  private lastDisconnectReason: string | null = null;
-  private lastCloseCode: number | null = null;
-  private lastCloseReason: string | null = null;
-  private pendingActions = new Map<string, PendingAction>();
   private capabilitySnapshot?: RelayCapabilitySnapshot;
   private dataPlane?: {
     uploadBaseUrl: string;
     downloadBaseUrl: string;
   };
+  private lastDisconnectReason: string | null = null;
+  private lastCloseCode: number | null = null;
+  private lastCloseReason: string | null = null;
 
   public constructor(private readonly options: RelayClientOptions) {
     super();
-    this.reconnectDelayMs = options.reconnectBackoffMs;
   }
 
   public async start(): Promise<RelayCapabilitySnapshot | undefined> {
     this.started = true;
-    logRuntimeEvent("info", "Starting relay control-plane client", {
+    this.emit("status", this.buildConnectingStatus());
+    logRuntimeEvent("info", "Starting relay HTTP client", {
       accountId: this.options.accountId,
       url: this.options.url,
     });
     try {
-      return await this.openSocket({ recovering: false });
-    } catch (error) {
-      if (isFatalStartupError(error)) {
-        throw error;
-      }
-      return undefined;
-    }
-  }
-
-  public async stop(): Promise<void> {
-    this.started = false;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    logRuntimeEvent("info", "Stopping relay control-plane client", {
-      accountId: this.options.accountId,
-    });
-    if (this.socket) {
-      const socket = this.socket;
-      this.socket = null;
-      if (socket.readyState === WebSocket.CLOSED) {
-        this.emit("status", this.buildStoppedStatus());
-        return;
-      }
-      await new Promise<void>((resolve) => {
-        socket.once("close", () => resolve());
-        socket.close();
-      });
-    }
-    this.reconnectAttempts = 0;
-    this.emit("status", this.buildStoppedStatus());
-  }
-
-  public getCapabilitySnapshot(): RelayCapabilitySnapshot | undefined {
-    return this.capabilitySnapshot;
-  }
-
-  public getDataPlane() {
-    return this.dataPlane;
-  }
-
-  public async dispatchAction(action: RelayActionPayload): Promise<RelayActionSuccess> {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error("ACCOUNT_NOT_READY: relay socket is not connected");
-    }
-
-    const requestId = randomUUID();
-    const frame = transportActionRequestSchema.parse({
-      type: "request",
-      requestType: "transport.action",
-      requestId,
-      action,
-    });
-
-    return await new Promise<RelayActionSuccess>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        const pending = this.pendingActions.get(requestId);
-        if (!pending || pending.settled) {
-          return;
-        }
-        pending.settled = true;
-        this.pendingActions.delete(requestId);
-        reject(new Error("transport action timed out"));
-      }, this.options.requestTimeoutMs);
-
-      this.pendingActions.set(requestId, {
-        actionId: action.actionId,
-        resolve,
-        reject,
-        timeout,
-        settled: false,
-      });
-
-      try {
-        this.socket?.send(JSON.stringify(frame));
-      } catch (error) {
-        clearTimeout(timeout);
-        this.pendingActions.delete(requestId);
-        reject(error);
-      }
-    });
-  }
-
-  private async openSocket(input: { recovering: boolean }): Promise<RelayCapabilitySnapshot> {
-    return await new Promise<RelayCapabilitySnapshot>((resolve, reject) => {
-      const socket = new WebSocket(this.options.url);
-      this.socket = socket;
-      this.helloResolved = false;
-      let suppressReconnect = false;
-      let startupFailureHandled = false;
-      logRuntimeEvent("info", "Connecting relay control-plane socket", {
-        accountId: this.options.accountId,
-        url: this.options.url,
-        recovering: input.recovering,
-        reconnectAttempts: this.reconnectAttempts,
-      });
-      this.emit("status", this.buildConnectingStatus({ recovering: input.recovering }));
-
-      const fail = (error: unknown) => {
-        if (this.helloResolved || startupFailureHandled) {
-          return;
-        }
-        startupFailureHandled = true;
-        suppressReconnect = isFatalStartupError(error);
-        const reason = error instanceof Error ? error.message : "Relay connection failed";
-        this.lastDisconnectReason = reason;
-        this.lastCloseCode = null;
-        this.lastCloseReason = null;
-        logRuntimeEvent(suppressReconnect ? "error" : "warn", "Relay control-plane connect failed", {
-          accountId: this.options.accountId,
-          reason,
-          fatal: suppressReconnect,
-          recovering: input.recovering,
-          reconnectAttempts: this.reconnectAttempts,
-          reconnectAlreadyScheduled: Boolean(this.reconnectTimer),
-        });
-        if (this.started && !suppressReconnect) {
-          if (input.recovering) {
-            this.reconnectDelayMs = Math.min(
-              this.reconnectDelayMs * 2,
-              this.options.maxReconnectBackoffMs
-            );
-          }
-          this.scheduleReconnect(reason);
-        }
-        reject(error);
-      };
-
-      socket.once("open", () => {
-        try {
-          const hello = helloRequestSchema.parse({
+      const response = await fetchWithTimeout(`${this.options.url}/hello`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          helloRequestSchema.parse({
             type: "hello",
             protocolVersion: 1,
             role: "openclaw-channel-plugin",
@@ -211,251 +69,145 @@ export class RelayClient extends EventEmitter {
               core: [...REQUIRED_CORE_CAPABILITIES],
               optional: ["typing", "fileDownloads"],
             },
-          });
-          socket.send(JSON.stringify(hello));
-        } catch (error) {
-          fail(error);
-        }
-      });
-
-      socket.on("message", (raw) => {
-        try {
-          const parsed = parseControlPlaneMessage(raw.toString());
-          if (parsed.type === "hello") {
-            const snapshot: RelayCapabilitySnapshot = {
-              coreCapabilities: parsed.coreCapabilities,
-              optionalCapabilities: parsed.optionalCapabilities,
-              providerCapabilities: parsed.providerCapabilities,
-              providerFeatures: parsed.providerFeatures,
-              providerProfiles: parsed.providerProfiles,
-              targetCapabilities: parsed.targetCapabilities,
-              limits: parsed.limits,
-              transport: parsed.transport,
-            };
-            this.assertRequiredCapabilities(snapshot);
-            this.capabilitySnapshot = snapshot;
-            this.dataPlane = parsed.dataPlane;
-            this.reconnectDelayMs = this.options.reconnectBackoffMs;
-            this.reconnectAttempts = 0;
-            this.helloResolved = true;
-            logRuntimeEvent("info", "Relay control-plane socket became healthy", {
-              accountId: this.options.accountId,
-              provider: snapshot.transport.provider,
-              recovering: input.recovering,
-            });
-            this.emit("capabilities", snapshot);
-            this.emit("status", this.buildHealthyStatus(snapshot));
-            resolve(snapshot);
-            return;
-          }
-
-          this.handleEvent(parsed);
-        } catch (error) {
-          fail(error);
-          logRuntimeEvent("warn", "Relay control-plane protocol error", {
-            accountId: this.options.accountId,
-            reason: error instanceof Error ? error.message : String(error),
-          });
-          this.emit("protocolError", error);
-        }
-      });
-
-      socket.on("close", (code, reasonBuffer) => {
-        if (this.socket === socket) {
-          this.socket = null;
-        }
-        const closeReason = decodeCloseReason(reasonBuffer);
-        this.lastCloseCode = normalizeCloseCode(code);
-        this.lastCloseReason = closeReason;
-        const disconnectReason = describeDisconnect({
-          code: this.lastCloseCode,
-          reason: closeReason,
-          helloResolved: this.helloResolved,
-        });
-        this.lastDisconnectReason = disconnectReason;
-        const pendingActionCount = this.pendingActions.size;
-        this.failPendingActions({
-          code: "ACCOUNT_NOT_READY",
-          message: "Relay socket closed",
-          retryable: true,
-        });
-        if (!this.helloResolved) {
-          if (!startupFailureHandled) {
-            fail(new Error(disconnectReason));
-          }
-          return;
-        }
-        if (this.started && !suppressReconnect) {
-          logRuntimeEvent("warn", "Relay control-plane socket disconnected", {
-            accountId: this.options.accountId,
-            reason: disconnectReason,
-            closeCode: this.lastCloseCode,
-            closeReason: this.lastCloseReason,
-            pendingActionCount,
-            reconnectAlreadyScheduled: Boolean(this.reconnectTimer),
-            reconnectInMs: this.reconnectDelayMs,
-          });
-          this.scheduleReconnect(disconnectReason);
-        }
-      });
-
-      socket.on("error", (error) => {
-        fail(error);
-      });
-    });
+          })
+        ),
+      }, this.options.requestTimeoutMs);
+      const hello = helloResponseSchema.parse(await response.json());
+      const snapshot: RelayCapabilitySnapshot = {
+        coreCapabilities: hello.coreCapabilities,
+        optionalCapabilities: hello.optionalCapabilities,
+        providerCapabilities: hello.providerCapabilities,
+        providerFeatures: hello.providerFeatures,
+        providerProfiles: hello.providerProfiles,
+        targetCapabilities: hello.targetCapabilities,
+        limits: hello.limits,
+        transport: hello.transport,
+      };
+      this.assertRequiredCapabilities(snapshot);
+      this.capabilitySnapshot = snapshot;
+      this.dataPlane = hello.dataPlane;
+      this.lastDisconnectReason = null;
+      this.lastCloseCode = null;
+      this.lastCloseReason = null;
+      this.emit("capabilities", snapshot);
+      this.emit("status", this.buildHealthyStatus(snapshot));
+      return snapshot;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.lastDisconnectReason = reason;
+      this.lastCloseCode = null;
+      this.lastCloseReason = null;
+      this.emit("status", this.buildDegradedStatus(reason, { recovering: false }));
+      if (isFatalStartupError(error)) {
+        throw error;
+      }
+      return undefined;
+    }
   }
 
-  private handleEvent(event: ReturnType<typeof parseControlPlaneMessage>) {
-    if (event.type !== "event") {
-      return;
-    }
+  public async stop(): Promise<void> {
+    this.started = false;
+    this.emit("status", this.buildStoppedStatus());
+  }
 
+  public getCapabilitySnapshot(): RelayCapabilitySnapshot | undefined {
+    return this.capabilitySnapshot;
+  }
+
+  public getDataPlane() {
+    return this.dataPlane;
+  }
+
+  public async dispatchAction(action: RelayActionPayload): Promise<RelayActionSuccess> {
+    if (!this.started) {
+      throw new Error("ACCOUNT_NOT_READY: account runtime has not been started");
+    }
+    const requestId = randomUUID();
+    try {
+      const response = await fetchWithTimeout(`${this.options.url}/actions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          transportActionRequestSchema.parse({
+            type: "request",
+            requestType: "transport.action",
+            requestId,
+            action,
+          })
+        ),
+      }, this.options.requestTimeoutMs);
+      const json = (await response.json()) as unknown;
+      const parsed = controlPlaneEventSchema.parse(json);
+      if (parsed.eventType === "transport.action.completed") {
+        return parsed.payload.result;
+      }
+      if (parsed.eventType === "transport.action.failed") {
+        throw new Error(`${parsed.payload.error.code}: ${parsed.payload.error.message}`);
+      }
+      if (parsed.eventType === "transport.protocol.error") {
+        throw new Error(`${parsed.payload.code}: ${parsed.payload.message}`);
+      }
+      throw new Error(`Unexpected relay action response: ${parsed.eventType}`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.lastDisconnectReason = reason;
+      this.lastCloseCode = null;
+      this.lastCloseReason = null;
+      this.emit("status", this.buildDegradedStatus(reason, { recovering: false }));
+      throw error;
+    }
+  }
+
+  public ingestEvent(rawEvent: Record<string, unknown>) {
+    const event = controlPlaneEventSchema.parse(rawEvent);
     switch (event.eventType) {
-      case "transport.action.accepted": {
-        this.emit("actionAccepted", event.payload);
-        break;
-      }
-      case "transport.action.completed": {
-        const pending = this.pendingActions.get(event.payload.requestId);
-        if (!pending || pending.settled) {
-          return;
-        }
-        pending.settled = true;
-        clearTimeout(pending.timeout);
-        this.pendingActions.delete(event.payload.requestId);
-        pending.resolve(event.payload.result);
-        break;
-      }
-      case "transport.action.failed": {
-        const pending = this.pendingActions.get(event.payload.requestId);
-        if (!pending || pending.settled) {
-          return;
-        }
-        pending.settled = true;
-        clearTimeout(pending.timeout);
-        this.pendingActions.delete(event.payload.requestId);
-        pending.reject(new Error(`${event.payload.error.code}: ${event.payload.error.message}`));
-        break;
-      }
-      case "transport.message.received": {
+      case "transport.message.received":
         this.emit("inboundMessage", event);
         break;
-      }
       case "transport.delivery.receipt":
-      case "transport.typing.updated": {
+      case "transport.typing.updated":
         this.emit("transportEvent", event);
         break;
-      }
       case "transport.account.connecting":
       case "transport.account.ready":
       case "transport.account.degraded":
       case "transport.account.disconnected":
       case "transport.account.status": {
-        const status =
-          event.payload.state === "healthy"
-            ? this.buildHealthyStatus(this.capabilitySnapshot)
-            : event.payload.state === "connecting"
-              ? this.buildConnectingStatus({
-                  recovering: this.started,
-                })
-              : event.payload.state === "stopped"
-                ? this.buildStoppedStatus()
-                : {
-                    ...this.buildRecoveryState({
-                      recovering: this.started,
-                    }),
-                    state: "degraded",
-                    reason: event.payload.reason ?? "Relay reported degraded state",
-                    capabilities: this.capabilitySnapshot,
-                  };
-        this.emit("status", status);
+        if (event.payload.state === "healthy") {
+          this.emit("status", this.buildHealthyStatus());
+        } else if (event.payload.state === "connecting") {
+          this.emit("status", this.buildConnectingStatus());
+        } else if (event.payload.state === "stopped") {
+          this.emit("status", this.buildStoppedStatus());
+        } else {
+          this.lastDisconnectReason = event.payload.reason ?? "Relay reported degraded state";
+          this.emit("status", this.buildDegradedStatus(this.lastDisconnectReason));
+        }
         break;
       }
-      case "transport.capabilities.updated": {
+      case "transport.capabilities.updated":
         this.capabilitySnapshot = event.payload;
         this.emit("capabilities", event.payload);
         this.emit("status", this.buildHealthyStatus(event.payload));
         break;
-      }
-      case "transport.protocol.error": {
-        this.emit("protocolError", new Error(`${event.payload.code}: ${event.payload.message}`));
+      case "transport.protocol.error":
+        this.lastDisconnectReason = `${event.payload.code}: ${event.payload.message}`;
+        this.emit("protocolError", new Error(this.lastDisconnectReason));
+        this.emit("status", this.buildDegradedStatus(this.lastDisconnectReason, { recovering: false }));
         break;
-      }
       default:
         break;
     }
   }
 
-  private scheduleReconnect(reason: string) {
-    if (!this.started) {
-      return;
-    }
-    if (this.reconnectTimer) {
-      logRuntimeEvent("info", "Relay control-plane reconnect already scheduled", {
-        accountId: this.options.accountId,
-        reason,
-        reconnectInMs: this.reconnectDelayMs,
-        reconnectAttempts: this.reconnectAttempts,
-      });
-      return;
-    }
-    const reconnectDelayMs = this.reconnectDelayMs;
-    logRuntimeEvent("info", "Scheduling relay control-plane reconnect", {
-      accountId: this.options.accountId,
-      reason,
-      reconnectInMs: reconnectDelayMs,
-      reconnectAttempts: this.reconnectAttempts,
-    });
-    this.emit(
-      "status",
-      this.buildDegradedStatus(reason, {
-        reconnectScheduled: true,
-        nextReconnectInMs: reconnectDelayMs,
-      })
-    );
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.reconnectAttempts += 1;
-      logRuntimeEvent("info", "Attempting relay control-plane reconnect", {
-        accountId: this.options.accountId,
-        reconnectAttempt: this.reconnectAttempts,
-      });
-      void this.openSocket({ recovering: true }).catch((error) => {
-        if (!isFatalStartupError(error)) {
-          return;
-        }
-        const fatalReason =
-          error instanceof Error ? error.message : "Relay reconnect failed fatally";
-        logRuntimeEvent("error", "Relay control-plane reconnect failed fatally", {
-          accountId: this.options.accountId,
-          reason: fatalReason,
-          reconnectAttempt: this.reconnectAttempts,
-        });
-        this.lastDisconnectReason = fatalReason;
-        this.emit(
-          "status",
-          this.buildDegradedStatus(fatalReason, {
-            recovering: false,
-            reconnectScheduled: false,
-            nextReconnectInMs: null,
-          })
-        );
-      });
-    }, reconnectDelayMs);
-  }
-
-  private buildConnectingStatus(
-    details: Partial<RelayRecoveryState> = {}
-  ): RelayAccountStatus {
+  private buildConnectingStatus(details: Partial<RelayRecoveryState> = {}): RelayAccountStatus {
     return {
       state: "connecting",
       ...this.buildRecoveryState(details),
     };
   }
 
-  private buildHealthyStatus(
-    capabilities?: RelayCapabilitySnapshot
-  ): RelayAccountStatus {
+  private buildHealthyStatus(capabilities?: RelayCapabilitySnapshot): RelayAccountStatus {
     return {
       state: "healthy",
       capabilities: capabilities ?? this.capabilitySnapshot ?? emptyCapabilities(),
@@ -476,7 +228,9 @@ export class RelayClient extends EventEmitter {
       reason,
       capabilities: this.capabilitySnapshot,
       ...this.buildRecoveryState({
-        recovering: true,
+        recovering: false,
+        reconnectScheduled: false,
+        nextReconnectInMs: null,
         ...details,
       }),
     };
@@ -500,9 +254,9 @@ export class RelayClient extends EventEmitter {
   private buildRecoveryState(details: Partial<RelayRecoveryState> = {}): RelayRecoveryState {
     return {
       recovering: false,
-      reconnectScheduled: Boolean(this.reconnectTimer),
-      reconnectAttempts: this.reconnectAttempts,
-      nextReconnectInMs: this.reconnectTimer ? this.reconnectDelayMs : null,
+      reconnectScheduled: false,
+      reconnectAttempts: 0,
+      nextReconnectInMs: null,
       lastDisconnectReason: this.lastDisconnectReason,
       lastCloseCode: this.lastCloseCode,
       lastCloseReason: this.lastCloseReason,
@@ -519,18 +273,6 @@ export class RelayClient extends EventEmitter {
       if (!snapshot.coreCapabilities[capability]) {
         throw new Error(`CAPABILITY_MISSING: missing required core capability ${capability}`);
       }
-    }
-  }
-
-  private failPendingActions(error: RelayActionFailure) {
-    for (const [requestId, pending] of this.pendingActions.entries()) {
-      if (pending.settled) {
-        continue;
-      }
-      pending.settled = true;
-      clearTimeout(pending.timeout);
-      pending.reject(new Error(`${error.code}: ${error.message}`));
-      this.pendingActions.delete(requestId);
     }
   }
 }
@@ -552,29 +294,28 @@ function emptyCapabilities(): RelayCapabilitySnapshot {
   };
 }
 
-function decodeCloseReason(reasonBuffer: Buffer): string | null {
-  const reason = reasonBuffer.toString("utf8").trim();
-  return reason.length > 0 ? reason : null;
-}
-
-function normalizeCloseCode(code: number): number | null {
-  return Number.isFinite(code) && code > 0 ? code : null;
-}
-
-function describeDisconnect(input: {
-  code: number | null;
-  reason: string | null;
-  helloResolved: boolean;
-}): string {
-  const phase = input.helloResolved ? "after hello" : "before hello";
-  if (input.code !== null && input.reason) {
-    return `Relay socket disconnected ${phase} (code=${input.code}, reason=${input.reason})`;
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP_${response.status}`);
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("transport action timed out");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  if (input.code !== null) {
-    return `Relay socket disconnected ${phase} (code=${input.code})`;
-  }
-  if (input.reason) {
-    return `Relay socket disconnected ${phase} (${input.reason})`;
-  }
-  return `Relay socket disconnected ${phase}`;
 }

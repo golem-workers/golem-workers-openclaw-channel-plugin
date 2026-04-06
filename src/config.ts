@@ -65,5 +65,5 @@ export function resolveAccountConfig(
 }
 
 function buildLoopbackUrl(port: number): string {
-  return `ws://127.0.0.1:${port}`;
+  return `http://127.0.0.1:${port}`;
 }

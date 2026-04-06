@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "url": "ws://127.0.0.1:43129",
+  "url": "http://127.0.0.1:43129",
   "reconnectBackoffMs": 500,
   "maxReconnectBackoffMs": 30000,
   "requestTimeoutMs": 10000,
@@ -27,7 +27,7 @@
   "accounts": [
     {
       "id": "default",
-      "url": "ws://127.0.0.1:43129"
+      "url": "http://127.0.0.1:43129"
     }
   ]
 }

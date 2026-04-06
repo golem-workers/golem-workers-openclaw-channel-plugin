@@ -13,7 +13,7 @@ focused contract tests.
   `approvalCapability` surfaces
 - OpenClaw SDK channel plugin entry with target resolution, outbound send wiring,
   and gateway runtime hooks
-- account-scoped runtime registry and WebSocket relay client
+- account-scoped runtime registry, HTTP relay client, and local event ingress
 - canonical target resolution, session routing, outbound route building, and
   stateless handle-based routing helpers
 - outbound text/media send plus typing and file-download request actions
@@ -71,11 +71,11 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 ## Runtime semantics
 
-- transient websocket loss moves an account into `degraded`, not `stopped`
+- transient local HTTP failures move an account into `degraded`, not `stopped`
 - `stopped` is reserved for explicit teardown such as `stopAccount(...)`
-- reconnect ownership stays inside the plugin runtime
-- account snapshots expose `recovering`, `reconnectScheduled`, close metadata, and
-  next backoff timing for supervisors and diagnostics
+- relay outbound actions are synchronous `POST /actions` calls on loopback
+- relay inbound events arrive through plugin-owned loopback HTTP ingress
+- plain text inbound retries are coalesced before delivery; attachments stay durable
 
 ## Current limitations
 
@@ -193,7 +193,7 @@ npm run smoke:agent -- \
   --channel-config-file ./examples/relay-channel.config.json
 ```
 
-To start a mock relay websocket on `127.0.0.1:43129` on the temporary agent and
+To start a mock relay HTTP control plane on `127.0.0.1:43129` on the temporary agent and
 run an outbound functional probe against it:
 
 ```bash

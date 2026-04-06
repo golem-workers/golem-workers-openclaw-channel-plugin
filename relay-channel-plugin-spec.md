@@ -4,14 +4,14 @@
 
 - Draft
 - Scope: bundled or third-party OpenClaw channel plugin
-- Purpose: connect OpenClaw to a local relay over WebSocket
+- Purpose: connect OpenClaw to a local relay over loopback HTTP
 - Design target: Telegram-class transport UX with relay-owned transport execution
 
 ## Summary
 
 This document specifies a universal OpenClaw channel plugin that connects to a
-trusted local relay service over an account-scoped control WebSocket plus a
-local file-transfer data plane.
+trusted local relay service over an account-scoped loopback HTTP control plane
+plus a local file-transfer data plane.
 
 The plugin is responsible for the OpenClaw channel contract:
 
@@ -144,9 +144,9 @@ correlation hints supplied by the plugin.
 
 V1 assumes a trusted local-only deployment:
 
-- the plugin connects only to a loopback WebSocket endpoint
+- the plugin connects only to a loopback HTTP endpoint
 - the relay and plugin trust each other
-- the WebSocket port is configurable
+- the loopback action endpoint is configurable
 - no transport auth handshake is required in v1
 
 This document intentionally skips auth. Future revisions may add:
@@ -393,28 +393,26 @@ Required behavior:
 - plugin-owned message-tool action discovery must re-read current capabilities
   instead of caching stale results indefinitely
 
-## WebSocket Connection Model
+## Loopback HTTP Model
 
-The plugin is always the WebSocket client.
+The plugin is always the HTTP action client and also owns a local HTTP ingress
+for relay-pushed events.
 
 Base assumptions:
 
-- default endpoint is `ws://127.0.0.1:<port>`
+- default action endpoint is `http://127.0.0.1:<port>`
 - host must be loopback only in v1
-- the plugin owns reconnect behavior
-- one connection belongs to one configured account runtime
-- the relay owns accepting one or more account-scoped plugin connections
+- relay actions remain synchronous
+- relay inbound events are pushed to plugin-owned loopback ingress
+- one configured account runtime owns one action endpoint plus one derived ingress
 
 Recommended plugin behavior:
 
-- connect on account runtime startup
-- back off on reconnect with bounded exponential retry
-- surface degraded account status when the relay is unavailable
-- keep reconnect ownership inside the plugin runtime rather than delegating it to
-  an outer supervisor
-- emit close code or reason and reconnect timer metadata so operators can
-  distinguish relay restarts from fatal contract failures
-- restore subscriptions and capability snapshots after reconnect
+- perform an HTTP hello on account runtime startup
+- surface degraded account status when the relay action endpoint is unavailable
+- accept relay-pushed inbound events on loopback without an extra transport auth layer
+- coalesce plain text retries while preserving durable attachment events
+- keep capability snapshots and account status updates as explicit relay-pushed events
 
 ## Relay Wire Protocol
 
@@ -423,7 +421,7 @@ and fully typed.
 
 The protocol has two planes:
 
-- control plane: JSON request and event frames over WebSocket
+- control plane: JSON request and event payloads over loopback HTTP
 - data plane: local HTTP or Unix socket endpoints for upload and download bytes
 
 The control plane is authoritative for action lifecycle, capability snapshots,

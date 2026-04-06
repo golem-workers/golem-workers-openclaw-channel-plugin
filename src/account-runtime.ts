@@ -9,6 +9,7 @@ import type {
   RelayTransportEvent,
 } from "../api.js";
 import { resolveAccountConfig } from "./config.js";
+import { registerRelayEventIngress } from "./event-ingress.js";
 import { mapInboundMessageEvent } from "./relay-events.js";
 import { RelayClient } from "./relay-client.js";
 import { logRuntimeEvent } from "./runtime-log.js";
@@ -16,6 +17,7 @@ import { RelayStatusRegistry } from "./status.js";
 
 export class RelayAccountRuntime {
   private client: RelayClient | null = null;
+  private closeIngress: (() => Promise<void>) | null = null;
 
   public constructor(
     private readonly config: RelayChannelPluginConfig,
@@ -104,7 +106,16 @@ export class RelayAccountRuntime {
       });
     });
 
+    const ingress = await registerRelayEventIngress({
+      accountId: this.accountId,
+      relayUrl: accountConfig.url,
+      onEvent: (event) => {
+        client.ingestEvent(event);
+      },
+    });
+
     this.client = client;
+    this.closeIngress = ingress.close;
     this.statusRegistry.setConnecting(this.accountId, {
       recovering: false,
       reconnectScheduled: false,
@@ -114,6 +125,8 @@ export class RelayAccountRuntime {
       await client.start();
     } catch (error) {
       this.client = null;
+      this.closeIngress = null;
+      await ingress.close();
       const reason = error instanceof Error ? error.message : "Relay connection failed";
       this.statusRegistry.setDegraded(
         this.accountId,
@@ -136,8 +149,11 @@ export class RelayAccountRuntime {
       return this.statusRegistry.get(this.accountId);
     }
     const client = this.client;
+    const closeIngress = this.closeIngress;
     this.client = null;
+    this.closeIngress = null;
     await client.stop();
+    await closeIngress?.();
     this.statusRegistry.setStopped(this.accountId);
     return this.statusRegistry.get(this.accountId);
   }

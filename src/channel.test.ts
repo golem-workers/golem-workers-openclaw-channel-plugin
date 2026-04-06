@@ -1,103 +1,117 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { WebSocketServer } from "ws";
-import net from "node:net";
+import { createServer, type Server } from "node:http";
 import { createRelayChannelPlugin } from "./channel.js";
 import { parseRelayChannelPluginConfig } from "./config.js";
+import { closeAllRelayEventIngressServersForTest } from "./event-ingress.js";
 import { RelayFileDataPlane } from "./file-data-plane.js";
 import { helloRequestSchema } from "./protocol/control-plane.js";
 import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
 import { resolveSessionConversation } from "./session-conversation.js";
 
 type MockRelayOptions = {
-  port?: number;
   capabilities?: {
     coreCapabilities?: Record<string, boolean>;
     optionalCapabilities?: Record<string, boolean>;
     providerCapabilities?: Record<string, boolean>;
     targetCapabilities?: Record<string, Record<string, boolean>>;
   };
-  onAction?: (actionFrame: Record<string, any>, ws: import("ws").WebSocket) => void;
-  afterHello?: (ws: import("ws").WebSocket) => void;
+  onAction?: (actionFrame: Record<string, any>) => Record<string, unknown>;
 };
 
-const servers: WebSocketServer[] = [];
+const servers: Server[] = [];
 
 afterEach(async () => {
+  await closeAllRelayEventIngressServersForTest();
   await Promise.all(
     servers.splice(0).map(
       (server) =>
-        new Promise<void>((resolve, reject) => {
-          for (const client of server.clients) {
-            client.terminate();
-          }
-          server.close((error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve();
-          });
+        new Promise<void>((resolve) => {
+          server.close(() => resolve());
         })
     )
   );
 });
 
-function startMockRelay(options: MockRelayOptions = {}) {
-  let connectionCount = 0;
+async function startMockRelay(options: MockRelayOptions = {}) {
+  let helloCount = 0;
   const seenActions: Array<Record<string, any>> = [];
-  const wss = new WebSocketServer({ port: options.port ?? 0 });
-  servers.push(wss);
-  wss.on("connection", (ws) => {
-    connectionCount += 1;
-    ws.on("message", (raw) => {
-      const frame = JSON.parse(raw.toString()) as Record<string, any>;
-      if (frame.type === "hello") {
-        helloRequestSchema.parse(frame);
-        ws.send(
-          JSON.stringify({
-            type: "hello",
-            protocolVersion: 1,
-            role: "local-relay",
-            relayInstanceId: "relay-1",
-            accountId: frame.accountId,
-            transport: {
-              provider: "telegram",
-              providerVersion: "bot-api-compatible",
-            },
-            coreCapabilities: {
-              messageSend: true,
-              mediaSend: true,
-              inboundMessages: true,
-              replyTo: true,
-              threadRouting: true,
-              ...(options.capabilities?.coreCapabilities ?? {}),
-            },
-            optionalCapabilities: options.capabilities?.optionalCapabilities ?? {},
-            providerCapabilities: options.capabilities?.providerCapabilities ?? {},
-            targetCapabilities: options.capabilities?.targetCapabilities ?? {},
-            limits: {
-              maxUploadBytes: 1024,
-              maxCaptionBytes: 100,
-              maxPollOptions: 3,
-            },
-            dataPlane: {
-              uploadBaseUrl: "http://127.0.0.1:43129/uploads",
-              downloadBaseUrl: "http://127.0.0.1:43129/downloads",
-            },
-          })
-        );
-        options.afterHello?.(ws);
-        return;
-      }
-      if (frame.requestType === "transport.action") {
-        seenActions.push(frame);
-        options.onAction?.(frame, ws);
-        return;
-      }
-    });
-  });
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    const parsed = body.length > 0 ? (JSON.parse(body) as Record<string, any>) : {};
 
-  const address = wss.address();
+    if (req.method === "POST" && req.url === "/hello") {
+      helloRequestSchema.parse(parsed);
+      helloCount += 1;
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          type: "hello",
+          protocolVersion: 1,
+          role: "local-relay",
+          relayInstanceId: "relay-1",
+          accountId: parsed.accountId,
+          transport: {
+            provider: "telegram",
+            providerVersion: "bot-api-compatible",
+          },
+          coreCapabilities: {
+            messageSend: true,
+            mediaSend: true,
+            inboundMessages: true,
+            replyTo: true,
+            threadRouting: true,
+            ...(options.capabilities?.coreCapabilities ?? {}),
+          },
+          optionalCapabilities: options.capabilities?.optionalCapabilities ?? {},
+          providerCapabilities: options.capabilities?.providerCapabilities ?? {},
+          targetCapabilities: options.capabilities?.targetCapabilities ?? {},
+          limits: {
+            maxUploadBytes: 1024,
+            maxCaptionBytes: 100,
+            maxPollOptions: 3,
+          },
+          dataPlane: {
+            uploadBaseUrl: "http://127.0.0.1:43129/uploads",
+            downloadBaseUrl: "http://127.0.0.1:43129/downloads",
+          },
+        })
+      );
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/actions") {
+      seenActions.push(parsed);
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify(
+          options.onAction?.(parsed) ?? {
+            type: "event",
+            eventType: "transport.action.completed",
+            payload: {
+              requestId: parsed.requestId,
+              actionId: parsed.action?.actionId,
+              result: {
+                transportMessageId: "mock-1",
+              },
+            },
+          }
+        )
+      );
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end();
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error("Failed to get mock relay address");
   }
@@ -105,49 +119,24 @@ function startMockRelay(options: MockRelayOptions = {}) {
   return {
     port: address.port,
     seenActions,
-    getConnectionCount: () => connectionCount,
-    closeConnection(code?: number, reason?: string) {
-      for (const client of wss.clients) {
-        client.close(code, reason);
-      }
-    },
-    reopenHealthy() {
-      for (const client of wss.clients) {
-        client.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.account.ready",
-            payload: {
-              accountId: "default",
-              state: "healthy",
-            },
-          })
-        );
-      }
+    getConnectionCount: () => helloCount,
+    publishEvent: async (event: Record<string, unknown>) => {
+      const eventType = String(event.eventType ?? "");
+      const path =
+        eventType === "transport.message.received"
+          ? "/events/message-received"
+          : eventType === "transport.capabilities.updated"
+            ? "/events/capabilities"
+            : eventType.startsWith("transport.account.")
+              ? "/events/account-status"
+              : "/events/transport-event";
+      await fetch(`http://127.0.0.1:${address.port + 2}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(event),
+      });
     },
   };
-}
-
-async function reservePort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("Failed to reserve port"));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
 }
 
 describe("relay channel plugin", () => {
@@ -157,7 +146,7 @@ describe("relay channel plugin", () => {
       accounts: [{ id: "a" }],
     });
 
-    expect(config.accounts[0]?.url).toBe("ws://127.0.0.1:9999");
+    expect(config.accounts[0]?.url).toBe("http://127.0.0.1:9999");
   });
 
   it("parses hello capability negotiation contract", () => {
@@ -225,164 +214,26 @@ describe("relay channel plugin", () => {
     });
   });
 
-  it("suppresses duplicate terminal events", async () => {
-    const relay = startMockRelay({
-      onAction(frame, ws) {
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "m1",
-              },
-            },
-          })
-        );
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "m2",
-              },
-            },
-          })
-        );
-      },
-    });
-
+  it("starts one HTTP runtime per account", async () => {
+    const relay = await startMockRelay();
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
-      }),
-    });
-
-    await plugin.gateway.startAccount("default");
-    const result = await plugin.outbound.sendText({
-      accountId: "default",
-      target: plugin.directory.resolveTarget("telegram:group:-100"),
-      text: "hello",
-    });
-
-    expect(result.transportMessageId).toBe("m1");
-  });
-
-  it("establishes one runtime per account", async () => {
-    const relay = startMockRelay();
-    const plugin = createRelayChannelPlugin({
-      config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
 
     await plugin.gateway.startAccount("default");
     await plugin.gateway.startAccount("default");
-
-    expect(relay.getConnectionCount()).toBe(1);
-  });
-
-  it("transitions through degraded and back to healthy after reconnect", async () => {
-    const relay = startMockRelay();
-    const plugin = createRelayChannelPlugin({
-      config: parseRelayChannelPluginConfig({
-        reconnectBackoffMs: 80,
-        maxReconnectBackoffMs: 100,
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
-      }),
-    });
-
-    await plugin.gateway.startAccount("default");
-    relay.closeConnection(1012, "relay reboot");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(plugin.status.getAccountStatus("default")).toMatchObject({
-      state: "degraded",
-      recovering: true,
-      reconnectScheduled: true,
-      lastCloseCode: 1012,
-      lastCloseReason: "relay reboot",
-    });
-
-    await plugin.gateway.startAccount("default");
-    expect(relay.getConnectionCount()).toBe(1);
-
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(plugin.status.getAccountStatus("default")).toMatchObject({
-      state: "healthy",
-      recovering: false,
-      reconnectScheduled: false,
-    });
-    expect(relay.getConnectionCount()).toBe(2);
-  });
-
-  it("degrades into self-recovery when relay is unavailable at startup", async () => {
-    const port = await reservePort();
-    const plugin = createRelayChannelPlugin({
-      config: parseRelayChannelPluginConfig({
-        reconnectBackoffMs: 50,
-        maxReconnectBackoffMs: 80,
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${port}` }],
-      }),
-    });
-
-    const startResult = await plugin.gateway.startAccount("default");
-    expect(startResult.status).toMatchObject({
-      state: "degraded",
-      recovering: true,
-      reconnectScheduled: true,
-      nextReconnectInMs: 50,
-    });
-
-    const relay = startMockRelay({ port });
-    await new Promise((resolve) => setTimeout(resolve, 90));
-    expect(plugin.status.getAccountStatus("default")).toMatchObject({
-      state: "healthy",
-      recovering: false,
-      reconnectScheduled: false,
-    });
     expect(relay.getConnectionCount()).toBe(1);
   });
 
   it("maps inbound text messages into canonical conversation routing", async () => {
     const inboundMessages: Array<{ sessionId: string; text?: string | null }> = [];
-    const relay = startMockRelay({
-      afterHello(ws) {
-        setTimeout(() => {
-          ws.send(
-            JSON.stringify({
-              type: "event",
-              eventType: "transport.message.received",
-              payload: {
-                eventId: "evt-1",
-                accountId: "default",
-                cursor: "106",
-                conversation: {
-                  handle: "-100123",
-                  baseConversationId: "-100123",
-                  parentConversationCandidates: ["-100123"],
-                },
-                thread: { handle: "77", threadId: "77" },
-                message: {
-                  transportMessageId: "2002",
-                  senderId: "user:555",
-                  text: "ping",
-                  attachments: [],
-                },
-              },
-            })
-          );
-        }, 5);
-      },
-    });
+    const relay = await startMockRelay();
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
       onInboundMessage(message) {
         inboundMessages.push({ sessionId: message.sessionConversation.id, text: message.text });
@@ -390,35 +241,54 @@ describe("relay channel plugin", () => {
     });
 
     await plugin.gateway.startAccount("default");
+    await relay.publishEvent({
+      type: "event",
+      eventType: "transport.message.received",
+      payload: {
+        eventId: "evt-1",
+        accountId: "default",
+        cursor: "106",
+        conversation: {
+          handle: "-100123",
+          baseConversationId: "-100123",
+          parentConversationCandidates: ["-100123"],
+        },
+        thread: { handle: "77", threadId: "77" },
+        message: {
+          transportMessageId: "2002",
+          senderId: "user:555",
+          text: "ping",
+          attachments: [],
+        },
+      },
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(inboundMessages).toEqual([{ sessionId: "-100123#77", text: "ping" }]);
   });
 
   it("emits the expected outbound text action envelope", async () => {
-    const relay = startMockRelay({
-      onAction(frame, ws) {
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "1001",
-                conversationId: "-100123",
-                threadId: "77",
-              },
+    const relay = await startMockRelay({
+      onAction(frame) {
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "1001",
+              conversationId: "-100123",
+              threadId: "77",
             },
-          })
-        );
+          },
+        };
       },
     });
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
 
@@ -445,27 +315,25 @@ describe("relay channel plugin", () => {
   });
 
   it("emits outbound media sends through the same transport action channel", async () => {
-    const relay = startMockRelay({
-      onAction(frame, ws) {
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "media-1001",
-              },
+    const relay = await startMockRelay({
+      onAction(frame) {
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "media-1001",
             },
-          })
-        );
+          },
+        };
       },
     });
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
 
@@ -493,28 +361,26 @@ describe("relay channel plugin", () => {
   });
 
   it("dispatches download actions through the negotiated relay channel", async () => {
-    const relay = startMockRelay({
-      onAction(frame, ws) {
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                downloadUrl: "http://127.0.0.1:43129/downloads/download-1",
-                token: "download-1",
-              },
+    const relay = await startMockRelay({
+      onAction(frame) {
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              downloadUrl: "http://127.0.0.1:43129/downloads/download-1",
+              token: "download-1",
             },
-          })
-        );
+          },
+        };
       },
     });
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
 
@@ -535,7 +401,7 @@ describe("relay channel plugin", () => {
   });
 
   it("describes typing and remaining optional message-tool actions", async () => {
-    const relay = startMockRelay({
+    const relay = await startMockRelay({
       capabilities: {
         optionalCapabilities: {
           typing: true,
@@ -551,7 +417,7 @@ describe("relay channel plugin", () => {
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
     await plugin.gateway.startAccount("default");
@@ -586,7 +452,7 @@ describe("relay channel plugin", () => {
   });
 
   it("rejects relays missing required core capabilities", async () => {
-    const relay = startMockRelay({
+    const relay = await startMockRelay({
       capabilities: {
         coreCapabilities: {
           replyTo: false,
@@ -596,7 +462,7 @@ describe("relay channel plugin", () => {
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
 
@@ -612,27 +478,25 @@ describe("relay channel plugin", () => {
   });
 
   it("allows baseline messaging when optional capabilities are absent", async () => {
-    const relay = startMockRelay({
-      onAction(frame, ws) {
-        ws.send(
-          JSON.stringify({
-            type: "event",
-            eventType: "transport.action.completed",
-            payload: {
-              requestId: frame.requestId,
-              actionId: frame.action.actionId,
-              result: {
-                transportMessageId: "ok-1",
-              },
+    const relay = await startMockRelay({
+      onAction(frame) {
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "ok-1",
             },
-          })
-        );
+          },
+        };
       },
     });
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
 
@@ -648,32 +512,11 @@ describe("relay channel plugin", () => {
 
   it("forwards transport-level events beyond inbound messages", async () => {
     const seenEvents: Array<{ eventType: string }> = [];
-    const relay = startMockRelay({
-      afterHello(ws) {
-        setTimeout(() => {
-          ws.send(
-            JSON.stringify({
-              type: "event",
-              eventType: "transport.typing.updated",
-              payload: {
-                eventId: "evt-2",
-                accountId: "default",
-                conversation: {
-                  handle: "-100123",
-                },
-                typing: {
-                  active: true,
-                },
-              },
-            })
-          );
-        }, 5);
-      },
-    });
+    const relay = await startMockRelay();
 
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
       onTransportEvent(event) {
         seenEvents.push({ eventType: event.eventType });
@@ -681,19 +524,33 @@ describe("relay channel plugin", () => {
     });
 
     await plugin.gateway.startAccount("default");
+    await relay.publishEvent({
+      type: "event",
+      eventType: "transport.typing.updated",
+      payload: {
+        eventId: "evt-2",
+        accountId: "default",
+        conversation: {
+          handle: "-100123",
+        },
+        typing: {
+          active: true,
+        },
+      },
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(seenEvents).toEqual([{ eventType: "transport.typing.updated" }]);
   });
 
   it("keeps security and approvals plugin-owned", async () => {
-    const relay = startMockRelay();
+    const relay = await startMockRelay();
     const plugin = createRelayChannelPlugin({
       config: parseRelayChannelPluginConfig({
         dmSecurityPolicy: {
           mode: "allow_list",
           allowedTargets: ["telegram:dm:user:1"],
         },
-        accounts: [{ id: "default", url: `ws://127.0.0.1:${relay.port}` }],
+        accounts: [{ id: "default", url: `http://127.0.0.1:${relay.port}` }],
       }),
     });
     await plugin.gateway.startAccount("default");
