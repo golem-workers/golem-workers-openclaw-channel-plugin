@@ -3,7 +3,9 @@ import { createServer, type Server } from "node:http";
 import { closeAllRelayEventIngressServersForTest } from "./event-ingress.js";
 import { relayChannelOpenclawPlugin } from "./openclaw-channel-plugin.js";
 
-const cfg = {
+type RelayTestConfig = Record<string, unknown>;
+
+const cfg: RelayTestConfig = {
   channels: {
     "relay-channel": {
       enabled: true,
@@ -145,12 +147,12 @@ async function startMockRelay(options?: {
   };
 }
 
-async function waitForHealthy(cfg: typeof cfg | Record<string, unknown>, accountId = "default") {
+async function waitForHealthy(cfg: RelayTestConfig, accountId = "default") {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const snapshot = relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
+    const snapshot = relayChannelOpenclawPlugin.status!.buildAccountSnapshot!({
       cfg: cfg as never,
       account: { accountId } as never,
-    } as never);
+    } as never) as { healthState?: string };
     if (snapshot.healthState === "healthy") {
       return;
     }
@@ -161,7 +163,7 @@ async function waitForHealthy(cfg: typeof cfg | Record<string, unknown>, account
 
 describe("relayChannelOpenclawPlugin", () => {
   it("resolves explicit relay targets through messaging fallback", async () => {
-    const resolved = await relayChannelOpenclawPlugin.messaging?.targetResolver?.resolveTarget?.({
+    const resolved = await relayChannelOpenclawPlugin.messaging!.targetResolver!.resolveTarget!({
       cfg,
       accountId: "default",
       input: "telegram:group:-100",
@@ -185,7 +187,7 @@ describe("relayChannelOpenclawPlugin", () => {
       info: () => {},
     };
 
-    const results = await relayChannelOpenclawPlugin.resolver?.resolveTargets({
+    const results = await relayChannelOpenclawPlugin.resolver!.resolveTargets!({
       cfg,
       accountId: "default",
       inputs: ["telegram:topic:-100#77"],
@@ -218,7 +220,7 @@ describe("relayChannelOpenclawPlugin", () => {
     const controller = new AbortController();
     let settled = false;
 
-    const task = relayChannelOpenclawPlugin.gateway!.startAccount({
+    const task = relayChannelOpenclawPlugin.gateway!.startAccount!({
       cfg: runtimeCfg as never,
       accountId,
       account: { accountId } as never,
@@ -236,7 +238,7 @@ describe("relayChannelOpenclawPlugin", () => {
     expect(settled).toBe(true);
 
     expect(
-      relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
+      relayChannelOpenclawPlugin.status!.buildAccountSnapshot!({
         cfg: runtimeCfg as never,
         account: { accountId } as never,
       } as never)
@@ -248,7 +250,7 @@ describe("relayChannelOpenclawPlugin", () => {
       reconnectScheduled: false,
     });
 
-    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
       cfg: runtimeCfg as never,
       accountId,
       account: { accountId } as never,
@@ -267,7 +269,7 @@ describe("relayChannelOpenclawPlugin", () => {
       },
     };
     const controller = new AbortController();
-    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
       cfg: runtimeCfg as never,
       accountId,
       account: { accountId } as never,
@@ -275,14 +277,14 @@ describe("relayChannelOpenclawPlugin", () => {
     } as never);
 
     await waitForHealthy(runtimeCfg, accountId);
-    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
       cfg: runtimeCfg as never,
       accountId,
       account: { accountId } as never,
     } as never);
 
     expect(
-      relayChannelOpenclawPlugin.status!.buildAccountSnapshot({
+      relayChannelOpenclawPlugin.status!.buildAccountSnapshot!({
         cfg: runtimeCfg as never,
         account: { accountId } as never,
       } as never)
@@ -333,7 +335,7 @@ describe("relayChannelOpenclawPlugin", () => {
       },
     };
     const controller = new AbortController();
-    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
       cfg: runtimeCfg as never,
       accountId: "send-action",
       account: { accountId: "send-action" } as never,
@@ -342,7 +344,7 @@ describe("relayChannelOpenclawPlugin", () => {
 
     await waitForHealthy(runtimeCfg, "send-action");
 
-    const result = await relayChannelOpenclawPlugin.actions!.handleAction({
+    const result = await relayChannelOpenclawPlugin.actions!.handleAction!({
       action: "send",
       params: {
         target: "telegram:123",
@@ -373,7 +375,7 @@ describe("relayChannelOpenclawPlugin", () => {
 
     controller.abort();
     await startTask;
-    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
       cfg: runtimeCfg as never,
       accountId: "send-action",
       account: { accountId: "send-action" } as never,
@@ -416,7 +418,7 @@ describe("relayChannelOpenclawPlugin", () => {
       },
     };
     const controller = new AbortController();
-    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount({
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
       cfg: runtimeCfg as never,
       accountId: "implicit-targets",
       account: { accountId: "implicit-targets" } as never,
@@ -425,7 +427,7 @@ describe("relayChannelOpenclawPlugin", () => {
 
     await waitForHealthy(runtimeCfg, "implicit-targets");
 
-    await relayChannelOpenclawPlugin.outbound!.sendText?.({
+    await relayChannelOpenclawPlugin.outbound!.sendText!({
       cfg: runtimeCfg as never,
       to: "7278830001",
       text: "hello",
@@ -445,7 +447,7 @@ describe("relayChannelOpenclawPlugin", () => {
 
     controller.abort();
     await startTask;
-    await relayChannelOpenclawPlugin.gateway!.stopAccount({
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
       cfg: runtimeCfg as never,
       accountId: "implicit-targets",
       account: { accountId: "implicit-targets" } as never,

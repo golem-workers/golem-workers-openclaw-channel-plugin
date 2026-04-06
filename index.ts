@@ -1,4 +1,4 @@
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import { defineChannelPluginEntry } from "./openclaw-sdk.js";
 import { relayChannelOpenclawPlugin } from "./src/openclaw-channel-plugin.js";
 
 export * from "./api.js";

@@ -1,15 +1,13 @@
 import {
   buildChannelConfigSchema,
   createChannelPluginBase,
-  type ChannelPlugin,
-  type OpenClawConfig,
-} from "openclaw/plugin-sdk/core";
-import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
-import {
   jsonResult,
+  readBooleanParam,
   readStringOrNumberParam,
   readStringParam,
-} from "openclaw/plugin-sdk/telegram-core";
+  type ChannelPlugin,
+  type OpenClawConfig,
+} from "../openclaw-sdk.js";
 import { RelayAccountRuntime } from "./account-runtime.js";
 import { parseRelayChannelPluginConfig, relayChannelPluginConfigSchema, resolveAccountConfig } from "./config.js";
 import { describeMessageTool } from "./message-actions.js";
