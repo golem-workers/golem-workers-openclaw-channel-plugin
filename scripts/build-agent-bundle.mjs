@@ -116,7 +116,9 @@ export async function buildAgentBundle(input = {}) {
   );
 
   await rm(outputPath, { force: true });
-  runCommand("tar", ["-czf", outputPath, "-C", stagingRoot, pluginId], {
+  // OpenClaw rejects link entries inside plugin archives, while npm may emit
+  // symlinks in node_modules/.bin on Linux. Pack the dereferenced tree instead.
+  runCommand("tar", ["-czhf", outputPath, "-C", stagingRoot, pluginId], {
     env: {
       ...process.env,
       COPYFILE_DISABLE: "1",
