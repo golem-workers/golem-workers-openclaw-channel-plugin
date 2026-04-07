@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,6 +50,27 @@ function runCommand(command, args, options = {}) {
   if (result.status !== 0) {
     throw new Error(`Command failed: ${command} ${args.join(" ")}`);
   }
+}
+
+async function removeSymlinksRecursively(targetPath) {
+  if (!(await pathExists(targetPath))) {
+    return 0;
+  }
+
+  let removed = 0;
+  for (const entry of await readdir(targetPath)) {
+    const entryPath = path.join(targetPath, entry);
+    const entryStat = await lstat(entryPath);
+    if (entryStat.isSymbolicLink()) {
+      await unlink(entryPath);
+      removed += 1;
+      continue;
+    }
+    if (entryStat.isDirectory()) {
+      removed += await removeSymlinksRecursively(entryPath);
+    }
+  }
+  return removed;
 }
 
 export async function buildAgentBundle(input = {}) {
@@ -115,10 +136,15 @@ export async function buildAgentBundle(input = {}) {
     { cwd: stagingPackageDir }
   );
 
+  const removedSymlinkCount = await removeSymlinksRecursively(
+    path.join(stagingPackageDir, "node_modules")
+  );
+  if (removedSymlinkCount > 0) {
+    process.stdout.write(`Removed ${removedSymlinkCount} symlink entries from bundle staging.\n`);
+  }
+
   await rm(outputPath, { force: true });
-  // OpenClaw rejects link entries inside plugin archives, while npm may emit
-  // symlinks in node_modules/.bin on Linux. Pack the dereferenced tree instead.
-  runCommand("tar", ["-czhf", outputPath, "-C", stagingRoot, pluginId], {
+  runCommand("tar", ["-czf", outputPath, "-C", stagingRoot, pluginId], {
     env: {
       ...process.env,
       COPYFILE_DISABLE: "1",
