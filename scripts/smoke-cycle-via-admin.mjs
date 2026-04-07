@@ -387,20 +387,44 @@ async function runMockFunctionalProbe({ host, port, identityFile }) {
   });
 
   let status = { stdout: "", stderr: "" };
+  let statusHealthy = false;
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5_000));
     status = runSshScript({
       host,
       port,
       identityFile,
-      script: `${systemdEnv}openclaw channels status --probe`,
+      script: `${systemdEnv}openclaw channels status --json`,
     });
     process.stdout.write(`[smoke] mock functional status attempt ${attempt}\n${status.stdout}`);
-    if (
-      status.stdout.includes("Relay Channel default:") &&
-      !status.stdout.includes("disconnected") &&
-      !status.stdout.includes("ECONNREFUSED")
-    ) {
+    try {
+      const parsed = JSON.parse(status.stdout);
+      const channels =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.channels
+          ? parsed.channels
+          : parsed;
+      const snapshot =
+        channels && typeof channels === "object" && !Array.isArray(channels)
+          ? channels["relay-channel"]
+          : null;
+      if (
+        snapshot &&
+        typeof snapshot === "object" &&
+        !Array.isArray(snapshot) &&
+        snapshot.accountId === "default" &&
+        snapshot.configured === true &&
+        snapshot.running === true &&
+        snapshot.linked === true &&
+        snapshot.connected === true &&
+        (typeof snapshot.healthState !== "string" || snapshot.healthState === "healthy")
+      ) {
+        statusHealthy = true;
+        break;
+      }
+    } catch {
+      // Keep polling; the final error path prints the raw status output.
+    }
+    if (statusHealthy) {
       break;
     }
   }
@@ -430,7 +454,7 @@ PY`,
   if (!resolved.stdout.includes("telegram:group:-100 -> telegram:group:-100")) {
     throw new Error(`Mock relay resolve probe did not return the expected normalized target.\n${resolved.stdout}`);
   }
-  if (status.stdout.includes("disconnected") || status.stdout.includes("ECONNREFUSED")) {
+  if (!statusHealthy) {
     throw new Error(
       `Relay channel never became healthy against the mock relay.\nStatus:\n${status.stdout}\nMock log:\n${mockLogBeforeSend.stdout}`
     );
