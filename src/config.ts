@@ -30,7 +30,9 @@ export const relayChannelPluginConfigSchema = z.object({
   directory: z.object({
     enabled: z.boolean().optional().default(true),
   }).optional().default({ enabled: true }),
-  accounts: z.array(accountSchema).min(1),
+  // Allow install-time empty config so OpenClaw can track the plugin first and
+  // provisioning can inject account wiring in a second step.
+  accounts: z.array(accountSchema).optional().default([]),
 });
 
 export function parseRelayChannelPluginConfig(input: unknown): RelayChannelPluginConfig {

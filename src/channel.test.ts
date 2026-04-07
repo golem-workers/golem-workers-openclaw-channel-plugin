@@ -159,6 +159,13 @@ describe("relay channel plugin", () => {
     expect(parsed.accounts[0]?.id).toBe("default");
   });
 
+  it("accepts empty install-time config before accounts are provisioned", () => {
+    const parsed = parseRelayChannelPluginConfig({});
+
+    expect(parsed.enabled).toBe(true);
+    expect(parsed.accounts).toEqual([]);
+  });
+
   it("normalizes and resolves targets", () => {
     const plugin = createRelayChannelPlugin();
 

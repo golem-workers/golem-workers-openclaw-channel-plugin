@@ -125,12 +125,9 @@ The deploy script:
 
 - builds a bundle when `--bundle` is not provided
 - uploads it over `scp`
-- installs it into `~/.openclaw/workspace/plugins/relay-channel`
-- patches `~/.openclaw/openclaw.json`
-- adds the install path to `plugins.load.paths`
-- adds `relay-channel` to `plugins.allow`
-- removes `relay-channel` from `plugins.deny`
-- optionally injects `channels.relay-channel` from a local JSON file
+- installs it through `openclaw plugins install`
+- optionally injects `channels.relay-channel` from a local JSON file via `openclaw config set`
+- explicitly enables `relay-channel` through `openclaw plugins enable`
 - restarts `openclaw-gateway.service`
 - prints a post-install summary
 
