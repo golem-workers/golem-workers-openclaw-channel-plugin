@@ -104,6 +104,10 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 The repo includes SSH-based helper scripts for live-agent testing from a local
 build.
 
+Agent/server image preparation in the sibling repos can pin this repo
+explicitly via `RELAY_CHANNEL_PLUGIN_GIT_REF` instead of relying on
+`NODE_ENV`-driven branch selection.
+
 ### Build a self-contained bundle
 
 This creates a `.tgz` archive with `dist/`, `openclaw.plugin.json`,
