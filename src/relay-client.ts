@@ -23,7 +23,10 @@ export type RelayClientOptions = {
   maxReconnectBackoffMs: number;
   requestTimeoutMs: number;
   requiredCoreCapabilities?: string[];
+  healthcheckIntervalMs?: number;
 };
+
+const DEFAULT_HEALTHCHECK_INTERVAL_MS = 10_000;
 
 export class RelayClient extends EventEmitter {
   private started = false;
@@ -35,6 +38,10 @@ export class RelayClient extends EventEmitter {
   private lastDisconnectReason: string | null = null;
   private lastCloseCode: number | null = null;
   private lastCloseReason: string | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private healthcheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private connectionHealthy = false;
 
   public constructor(private readonly options: RelayClientOptions) {
     super();
@@ -42,71 +49,22 @@ export class RelayClient extends EventEmitter {
 
   public async start(): Promise<RelayCapabilitySnapshot | undefined> {
     this.started = true;
-    this.emit("status", this.buildConnectingStatus());
-    logRuntimeEvent("info", "Starting relay HTTP client", {
-      accountId: this.options.accountId,
-      url: this.options.url,
+    this.clearReconnectTimer();
+    this.clearHealthcheckTimer();
+    this.reconnectAttempts = 0;
+    return await this.performHello({
+      reason: "startup",
+      recovering: false,
+      emitConnecting: true,
+      logAttempt: true,
     });
-    try {
-      const response = await fetchWithTimeout(`${this.options.url}/hello`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          helloRequestSchema.parse({
-            type: "hello",
-            protocolVersion: 1,
-            role: "openclaw-channel-plugin",
-            channelId: "relay-channel",
-            instanceId: `${this.options.accountId}-instance`,
-            accountId: this.options.accountId,
-            supports: {
-              asyncLifecycle: true,
-              fileDownloadRequests: true,
-              capabilityNegotiation: true,
-              accountScopedStatus: true,
-            },
-            requestedCapabilities: {
-              core: [...REQUIRED_CORE_CAPABILITIES],
-              optional: ["typing", "fileDownloads"],
-            },
-          })
-        ),
-      }, this.options.requestTimeoutMs);
-      const hello = helloResponseSchema.parse(await response.json());
-      const snapshot: RelayCapabilitySnapshot = {
-        coreCapabilities: hello.coreCapabilities,
-        optionalCapabilities: hello.optionalCapabilities,
-        providerCapabilities: hello.providerCapabilities,
-        providerFeatures: hello.providerFeatures,
-        providerProfiles: hello.providerProfiles,
-        targetCapabilities: hello.targetCapabilities,
-        limits: hello.limits,
-        transport: hello.transport,
-      };
-      this.assertRequiredCapabilities(snapshot);
-      this.capabilitySnapshot = snapshot;
-      this.dataPlane = hello.dataPlane;
-      this.lastDisconnectReason = null;
-      this.lastCloseCode = null;
-      this.lastCloseReason = null;
-      this.emit("capabilities", snapshot);
-      this.emit("status", this.buildHealthyStatus(snapshot));
-      return snapshot;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      this.lastDisconnectReason = reason;
-      this.lastCloseCode = null;
-      this.lastCloseReason = null;
-      this.emit("status", this.buildDegradedStatus(reason, { recovering: false }));
-      if (isFatalStartupError(error)) {
-        throw error;
-      }
-      return undefined;
-    }
   }
 
   public async stop(): Promise<void> {
     this.started = false;
+    this.connectionHealthy = false;
+    this.clearReconnectTimer();
+    this.clearHealthcheckTimer();
     this.emit("status", this.buildStoppedStatus());
   }
 
@@ -139,6 +97,7 @@ export class RelayClient extends EventEmitter {
       const json = (await response.json()) as unknown;
       const parsed = controlPlaneEventSchema.parse(json);
       if (parsed.eventType === "transport.action.completed") {
+        this.markConnectionHealthy();
         return parsed.payload.result;
       }
       if (parsed.eventType === "transport.action.failed") {
@@ -147,13 +106,14 @@ export class RelayClient extends EventEmitter {
       if (parsed.eventType === "transport.protocol.error") {
         throw new Error(`${parsed.payload.code}: ${parsed.payload.message}`);
       }
+      this.markConnectionHealthy();
       throw new Error(`Unexpected relay action response: ${parsed.eventType}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.lastDisconnectReason = reason;
       this.lastCloseCode = null;
       this.lastCloseReason = null;
-      this.emit("status", this.buildDegradedStatus(reason, { recovering: false }));
+      this.scheduleReconnect(reason);
       throw error;
     }
   }
@@ -188,12 +148,12 @@ export class RelayClient extends EventEmitter {
       case "transport.capabilities.updated":
         this.capabilitySnapshot = event.payload;
         this.emit("capabilities", event.payload);
-        this.emit("status", this.buildHealthyStatus(event.payload));
+        this.markConnectionHealthy(event.payload);
         break;
       case "transport.protocol.error":
         this.lastDisconnectReason = `${event.payload.code}: ${event.payload.message}`;
         this.emit("protocolError", new Error(this.lastDisconnectReason));
-        this.emit("status", this.buildDegradedStatus(this.lastDisconnectReason, { recovering: false }));
+        this.scheduleReconnect(this.lastDisconnectReason);
         break;
       default:
         break;
@@ -273,6 +233,179 @@ export class RelayClient extends EventEmitter {
       if (!snapshot.coreCapabilities[capability]) {
         throw new Error(`CAPABILITY_MISSING: missing required core capability ${capability}`);
       }
+    }
+  }
+
+  private async performHello(input: {
+    reason: "startup" | "healthcheck" | "reconnect";
+    recovering: boolean;
+    emitConnecting: boolean;
+    logAttempt: boolean;
+  }): Promise<RelayCapabilitySnapshot | undefined> {
+    if (!this.started) {
+      return undefined;
+    }
+    if (input.emitConnecting) {
+      this.emit(
+        "status",
+        this.buildConnectingStatus({
+          recovering: input.recovering,
+          reconnectScheduled: false,
+          reconnectAttempts: this.reconnectAttempts,
+          nextReconnectInMs: null,
+        })
+      );
+    }
+    if (input.logAttempt) {
+      logRuntimeEvent(
+        "info",
+        input.reason === "startup" ? "Starting relay HTTP client" : "Reconnecting relay HTTP client",
+        {
+          accountId: this.options.accountId,
+          url: this.options.url,
+          reason: input.reason,
+          reconnectAttempts: this.reconnectAttempts,
+        }
+      );
+    }
+    try {
+      const response = await fetchWithTimeout(
+        `${this.options.url}/hello`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            helloRequestSchema.parse({
+              type: "hello",
+              protocolVersion: 1,
+              role: "openclaw-channel-plugin",
+              channelId: "relay-channel",
+              instanceId: `${this.options.accountId}-instance`,
+              accountId: this.options.accountId,
+              supports: {
+                asyncLifecycle: true,
+                fileDownloadRequests: true,
+                capabilityNegotiation: true,
+                accountScopedStatus: true,
+              },
+              requestedCapabilities: {
+                core: [...REQUIRED_CORE_CAPABILITIES],
+                optional: ["typing", "fileDownloads"],
+              },
+            })
+          ),
+        },
+        this.options.requestTimeoutMs
+      );
+      const hello = helloResponseSchema.parse(await response.json());
+      const snapshot: RelayCapabilitySnapshot = {
+        coreCapabilities: hello.coreCapabilities,
+        optionalCapabilities: hello.optionalCapabilities,
+        providerCapabilities: hello.providerCapabilities,
+        providerFeatures: hello.providerFeatures,
+        providerProfiles: hello.providerProfiles,
+        targetCapabilities: hello.targetCapabilities,
+        limits: hello.limits,
+        transport: hello.transport,
+      };
+      this.assertRequiredCapabilities(snapshot);
+      this.capabilitySnapshot = snapshot;
+      this.dataPlane = hello.dataPlane;
+      this.emit("capabilities", snapshot);
+      this.markConnectionHealthy(snapshot);
+      return snapshot;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.lastDisconnectReason = reason;
+      this.lastCloseCode = null;
+      this.lastCloseReason = null;
+      if (isFatalStartupError(error)) {
+        this.connectionHealthy = false;
+        this.clearReconnectTimer();
+        this.clearHealthcheckTimer();
+        this.emit("status", this.buildDegradedStatus(reason, { recovering: false }));
+        throw error;
+      }
+      this.scheduleReconnect(reason);
+      return undefined;
+    }
+  }
+
+  private markConnectionHealthy(capabilities?: RelayCapabilitySnapshot): void {
+    const shouldEmitStatus = !this.connectionHealthy;
+    this.connectionHealthy = true;
+    this.reconnectAttempts = 0;
+    this.clearReconnectTimer();
+    this.scheduleHealthcheck();
+    this.lastDisconnectReason = null;
+    this.lastCloseCode = null;
+    this.lastCloseReason = null;
+    if (shouldEmitStatus) {
+      this.emit("status", this.buildHealthyStatus(capabilities));
+    }
+  }
+
+  private scheduleReconnect(reason: string): void {
+    if (!this.started) {
+      return;
+    }
+    this.connectionHealthy = false;
+    this.clearHealthcheckTimer();
+    if (this.reconnectTimer) {
+      return;
+    }
+    this.reconnectAttempts += 1;
+    const delayMs = Math.min(
+      this.options.maxReconnectBackoffMs,
+      this.options.reconnectBackoffMs * 2 ** Math.max(0, this.reconnectAttempts - 1)
+    );
+    this.emit(
+      "status",
+      this.buildDegradedStatus(reason, {
+        recovering: true,
+        reconnectScheduled: true,
+        reconnectAttempts: this.reconnectAttempts,
+        nextReconnectInMs: delayMs,
+      })
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.performHello({
+        reason: "reconnect",
+        recovering: true,
+        emitConnecting: true,
+        logAttempt: true,
+      });
+    }, delayMs);
+  }
+
+  private scheduleHealthcheck(): void {
+    if (!this.started) {
+      return;
+    }
+    this.clearHealthcheckTimer();
+    this.healthcheckTimer = setTimeout(() => {
+      this.healthcheckTimer = null;
+      void this.performHello({
+        reason: "healthcheck",
+        recovering: false,
+        emitConnecting: false,
+        logAttempt: false,
+      });
+    }, this.options.healthcheckIntervalMs ?? DEFAULT_HEALTHCHECK_INTERVAL_MS);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private clearHealthcheckTimer(): void {
+    if (this.healthcheckTimer) {
+      clearTimeout(this.healthcheckTimer);
+      this.healthcheckTimer = null;
     }
   }
 }

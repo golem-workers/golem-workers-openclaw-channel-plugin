@@ -73,6 +73,9 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 
 - transient local HTTP failures move an account into `degraded`, not `stopped`
 - `stopped` is reserved for explicit teardown such as `stopAccount(...)`
+- the relay client periodically refreshes `/hello` on loopback and automatically
+  re-runs the hello handshake after local relay restarts or other transient HTTP
+  failures
 - relay outbound actions are synchronous `POST /actions` calls on loopback
 - relay inbound events arrive through plugin-owned loopback HTTP ingress
 - plain text inbound retries are coalesced before delivery; attachments stay durable
