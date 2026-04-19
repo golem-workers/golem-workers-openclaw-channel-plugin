@@ -33,6 +33,9 @@ afterEach(async () => {
 async function startMockRelay(options?: {
   optionalCapabilities?: Record<string, boolean>;
   providerCapabilities?: Record<string, boolean>;
+  transportProvider?: string;
+  providerProfiles?: Record<string, unknown>;
+  targetCapabilities?: Record<string, Record<string, boolean>>;
   onAction?: (frame: {
     type: "request";
     requestType: "transport.action";
@@ -75,7 +78,7 @@ async function startMockRelay(options?: {
           relayInstanceId: "relay-1",
           accountId: frame.accountId ?? "default",
           transport: {
-            provider: "telegram",
+            provider: options?.transportProvider ?? "telegram",
             providerVersion: "bot-api-compatible",
           },
           coreCapabilities: {
@@ -90,6 +93,8 @@ async function startMockRelay(options?: {
             ...(options?.optionalCapabilities ?? {}),
           },
           providerCapabilities: options?.providerCapabilities ?? {},
+          ...(options?.providerProfiles ? { providerProfiles: options.providerProfiles } : {}),
+          ...(options?.targetCapabilities ? { targetCapabilities: options.targetCapabilities } : {}),
           limits: {},
           dataPlane: {
             uploadBaseUrl: "http://127.0.0.1:43129/uploads",
@@ -451,6 +456,122 @@ describe("relayChannelOpenclawPlugin", () => {
       cfg: runtimeCfg as never,
       accountId: "implicit-targets",
       account: { accountId: "implicit-targets" } as never,
+    } as never);
+  });
+
+  it("normalizes plain group targets to telegram when multi-provider relay exposes group support only there", async () => {
+    const seenActions: Array<{
+      kind: string;
+      payload: Record<string, unknown>;
+      transportTarget?: { channel?: string; chatId?: string };
+    }> = [];
+    const relay = await startMockRelay({
+      transportProvider: "multi",
+      providerProfiles: {
+        telegram: {
+          transport: {
+            provider: "telegram",
+            providerVersion: "bot-api-compatible",
+          },
+          coreCapabilities: {
+            messageSend: true,
+            mediaSend: true,
+            inboundMessages: true,
+            replyTo: true,
+            threadRouting: true,
+          },
+          optionalCapabilities: {
+            typing: true,
+            fileDownloads: true,
+          },
+          providerCapabilities: {},
+          targetCapabilities: {
+            dm: { typing: true, fileDownloads: true },
+            group: { typing: true, fileDownloads: true },
+          },
+          limits: {},
+        },
+        whatsapp_personal: {
+          transport: {
+            provider: "whatsapp_personal",
+            providerVersion: "relay-backend-bridge",
+          },
+          coreCapabilities: {
+            messageSend: true,
+            mediaSend: true,
+            replyTo: true,
+          },
+          optionalCapabilities: {},
+          providerCapabilities: {},
+          limits: {},
+        },
+      },
+      targetCapabilities: {
+        dm: { typing: true, fileDownloads: true },
+        group: { typing: true, fileDownloads: true },
+      },
+      onAction(frame) {
+        seenActions.push({
+          kind: frame.action.kind,
+          payload: frame.action.payload,
+          transportTarget: frame.action.transportTarget,
+        });
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "msg-group-implicit",
+              conversationId: "telegram:group:-5218477136",
+            },
+          },
+        };
+      },
+    });
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          accounts: [{ id: "implicit-group-targets", url: `http://127.0.0.1:${relay.port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "implicit-group-targets",
+      account: { accountId: "implicit-group-targets" } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, "implicit-group-targets");
+
+    await relayChannelOpenclawPlugin.outbound!.sendText!({
+      cfg: runtimeCfg as never,
+      to: "-5218477136",
+      text: "group hello",
+      accountId: "implicit-group-targets",
+    } as never);
+
+    expect(seenActions[0]).toMatchObject({
+      kind: "message.send",
+      payload: {
+        text: "group hello",
+      },
+      transportTarget: {
+        channel: "telegram",
+        chatId: "-5218477136",
+      },
+    });
+
+    controller.abort();
+    await startTask;
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "implicit-group-targets",
+      account: { accountId: "implicit-group-targets" } as never,
     } as never);
   });
 

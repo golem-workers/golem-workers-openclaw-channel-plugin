@@ -94,8 +94,12 @@ function normalizeThreadId(threadId: string | number | null | undefined) {
   return threadId !== undefined && threadId !== null ? String(threadId) : null;
 }
 
-function inferImplicitTargetChannel(capabilities: RelayCapabilitySnapshot | undefined): string | null {
+function inferImplicitTargetChannel(
+  capabilities: RelayCapabilitySnapshot | undefined,
+  scope?: "dm" | "group" | "topic"
+): string | null {
   const providers = new Set<string>();
+  const scopeProviders = new Set<string>();
   const addProvider = (value: unknown) => {
     if (typeof value !== "string") {
       return;
@@ -109,7 +113,18 @@ function inferImplicitTargetChannel(capabilities: RelayCapabilitySnapshot | unde
 
   addProvider(capabilities?.transport.provider);
   for (const profile of Object.values(capabilities?.providerProfiles ?? {})) {
-    addProvider(profile.transport.provider);
+    const provider = profile.transport.provider;
+    addProvider(provider);
+    const normalizedProvider = typeof provider === "string" ? provider.trim().toLowerCase() : "";
+    if (
+      scope &&
+      normalizedProvider &&
+      normalizedProvider !== "multi" &&
+      normalizedProvider !== "relay" &&
+      profile.targetCapabilities?.[scope]
+    ) {
+      scopeProviders.add(normalizedProvider);
+    }
   }
   for (const key of Object.keys(capabilities?.optionalCapabilities ?? {})) {
     if (key.includes(".")) {
@@ -122,6 +137,9 @@ function inferImplicitTargetChannel(capabilities: RelayCapabilitySnapshot | unde
     }
   }
 
+  if (scopeProviders.size === 1) {
+    return [...scopeProviders][0];
+  }
   return providers.size === 1 ? [...providers][0] : null;
 }
 
@@ -497,7 +515,10 @@ export const relayChannelOpenclawPlugin = {
       async resolveTarget({ cfg, accountId, input }) {
         const runtime = getRuntime(cfg, accountId);
         const resolved = resolveTarget(input, {
-          defaultChannel: inferImplicitTargetChannel(runtime.getCapabilitySnapshot()),
+          defaultChannel: inferImplicitTargetChannel(
+            runtime.getCapabilitySnapshot(),
+            inferTargetChatType(input)
+          ),
         });
         return {
           to: resolved.to,
@@ -558,10 +579,18 @@ export const relayChannelOpenclawPlugin = {
     async handleAction({ action, params, cfg, accountId, toolContext }) {
       const requestedAction = String(action);
       const runtime = await ensureRuntimeStarted(cfg, accountId);
+      const rawTargetForScope =
+        readStringParam(params, "to") ??
+        readStringParam(params, "target") ??
+        readStringParam(params, "channelId") ??
+        readStringParam(params, "targetId");
       const { target, explicitThreadId } = readMessageActionTarget({
         rawParams: params,
         toolContext,
-        defaultChannel: inferImplicitTargetChannel(runtime.getCapabilitySnapshot()),
+        defaultChannel: inferImplicitTargetChannel(
+          runtime.getCapabilitySnapshot(),
+          rawTargetForScope ? inferTargetChatType(rawTargetForScope) : undefined
+        ),
       });
       logRuntimeEvent("info", "handleAction dispatch", {
         accountId: resolvePluginAccountId(cfg, accountId),
@@ -648,7 +677,7 @@ export const relayChannelOpenclawPlugin = {
       const { target, explicitThreadId } = resolveOutboundTarget(
         to,
         threadId ?? null,
-        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(to))
       );
       const text = typeof payload?.text === "string" ? payload.text : "";
       logRuntimeEvent("info", "sendPayload resolved", {
@@ -683,7 +712,7 @@ export const relayChannelOpenclawPlugin = {
       const { target, explicitThreadId } = resolveOutboundTarget(
         to,
         threadId ?? null,
-        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(to))
       );
       const result = await runtime.sendAction({
         kind: "message.send",
@@ -701,7 +730,7 @@ export const relayChannelOpenclawPlugin = {
       const { target, explicitThreadId } = resolveOutboundTarget(
         to,
         threadId ?? null,
-        inferImplicitTargetChannel(runtime.getCapabilitySnapshot())
+        inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(to))
       );
       if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) {
         throw new Error("MEDIA_URL_REQUIRED: relay-channel sendMedia requires mediaUrl");
@@ -724,7 +753,10 @@ export const relayChannelOpenclawPlugin = {
       const { cfg, to, accountId, fileId } = input;
       const runtime = await ensureRuntimeStarted(cfg, accountId);
       const resolvedTarget = resolveTarget(to, {
-        defaultChannel: inferImplicitTargetChannel(runtime.getCapabilitySnapshot()),
+        defaultChannel: inferImplicitTargetChannel(
+          runtime.getCapabilitySnapshot(),
+          inferTargetChatType(to)
+        ),
       });
       const result = await runtime.sendAction({
         kind: "file.download.request",
