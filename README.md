@@ -1,24 +1,25 @@
 # golem-workers-openclaw-channel-plugin
 
-Relay-backed OpenClaw channel plugin skeleton with a typed control-plane contract,
-account runtime management, plugin-owned routing, file data-plane helpers, and
+Relay-backed OpenClaw channel plugin with Channel Message SDK delivery, a typed
+loopback relay bridge, account runtime management, plugin-owned routing, and
 focused contract tests.
 
 ## What is implemented
 
 - standalone TypeScript package with build, lint, and test scripts
 - `openclaw.plugin.json` plus package entrypoints
-- typed control-plane and data-plane schemas with `zod`
+- typed loopback relay bridge schemas with `zod`
 - plugin-owned `config`, `setup`, `status`, `security`, `pairing`, and
   `approvalCapability` surfaces
-- OpenClaw SDK channel plugin entry with target resolution, outbound send wiring,
-  and gateway runtime hooks
+- OpenClaw SDK channel plugin entry with target resolution, Channel Message SDK
+  `message.send` wiring, and gateway runtime hooks
 - account-scoped runtime registry, HTTP relay client, and local event ingress
 - canonical target resolution, session routing, outbound route building, and
   stateless handle-based routing helpers
-- outbound text/media send plus typing and file-download request actions
-- shared `message` tool action discovery exposes send plus capability-gated
-  typing behavior to OpenClaw
+- SDK-native outbound text/media/payload send with real `MessageReceipt`
+  results, plus compatibility typing and file-download request actions
+- shared `message` tool sends are prepared for OpenClaw core delivery through
+  the Channel Message SDK adapter instead of the old action handler path
 - transport-level event decoding for delivery receipts and typing updates
 - reconnect and duplicate-terminal-event handling tests
 - recovery-aware account status snapshots with reconnect diagnostics
@@ -76,7 +77,8 @@ npm run deploy:agent -- --host <host> --identity-file <key.pem>
 - the relay client periodically refreshes `/hello` on loopback and automatically
   re-runs the hello handshake after local relay restarts or other transient HTTP
   failures
-- relay outbound actions are synchronous `POST /actions` calls on loopback
+- SDK message sends use synchronous loopback `POST /actions` calls as the local
+  relay transport bridge
 - relay inbound events arrive through plugin-owned loopback HTTP ingress
 - plain text inbound retries are coalesced before delivery; attachments stay durable
 

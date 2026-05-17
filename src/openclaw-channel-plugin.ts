@@ -260,6 +260,105 @@ function buildOpenClawOutboundResult(
   };
 }
 
+function buildMessageReceiptResult(
+  result: { transportMessageId?: string; conversationId?: string; threadId?: string; downloadUrl?: string },
+  input: {
+    kind: "text" | "media";
+    fallbackMessageId: string;
+    replyToId?: string | null;
+    threadId?: string | number | null;
+  }
+) {
+  const messageId =
+    result.transportMessageId ??
+    result.conversationId ??
+    result.downloadUrl ??
+    input.fallbackMessageId;
+  const stringThreadId =
+    result.threadId ?? (input.threadId !== undefined && input.threadId !== null ? String(input.threadId) : undefined);
+  const stringReplyToId =
+    input.replyToId !== undefined && input.replyToId !== null ? String(input.replyToId) : undefined;
+  return {
+    messageId,
+    receipt: {
+      primaryPlatformMessageId: messageId,
+      platformMessageIds: [messageId],
+      parts: [
+        {
+          platformMessageId: messageId,
+          kind: input.kind,
+          index: 0,
+          raw: {
+            channel: CHANNEL_ID,
+            messageId,
+            conversationId: result.conversationId,
+            threadId: result.threadId,
+            meta: result,
+          },
+        },
+      ],
+      ...(stringThreadId ? { threadId: stringThreadId } : {}),
+      ...(stringReplyToId ? { replyToId: stringReplyToId } : {}),
+      sentAt: Date.now(),
+    },
+  };
+}
+
+async function sendRelayMessageThroughSdkAdapter(input: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+  to: string;
+  text?: string | null;
+  mediaUrl?: string | null;
+  replyToId?: string | null;
+  threadId?: string | number | null;
+  audioAsVoice?: boolean;
+  forceDocument?: boolean;
+}) {
+  const runtime = await ensureRuntimeStarted(input.cfg, input.accountId);
+  const { target, explicitThreadId } = resolveOutboundTarget(
+    input.to,
+    input.threadId ?? null,
+    inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(input.to))
+  );
+  const text = input.text?.trim() ?? "";
+  const mediaUrl = input.mediaUrl?.trim() ?? "";
+  const result = await runtime.sendAction({
+    kind: "message.send",
+    target,
+    payload: {
+      ...(text ? { text } : {}),
+      ...(mediaUrl ? { mediaUrl } : {}),
+      ...(input.audioAsVoice === true ? { asVoice: true } : {}),
+      ...(input.forceDocument === true ? { forceDocument: true } : {}),
+    },
+    replyToTransportMessageId: input.replyToId ?? null,
+    explicitThreadId,
+  });
+  return buildMessageReceiptResult(result, {
+    kind: mediaUrl ? "media" : "text",
+    fallbackMessageId: "relay-message",
+    replyToId: input.replyToId ?? null,
+    threadId: explicitThreadId ?? input.threadId ?? null,
+  });
+}
+
+function firstPayloadMediaUrl(payload: Record<string, unknown>, fallback?: string): string | undefined {
+  if (typeof fallback === "string" && fallback.trim()) {
+    return fallback;
+  }
+  const mediaUrl = payload.mediaUrl;
+  if (typeof mediaUrl === "string" && mediaUrl.trim()) {
+    return mediaUrl;
+  }
+  const mediaUrls = payload.mediaUrls;
+  if (Array.isArray(mediaUrls)) {
+    const first = mediaUrls.find((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return first;
+  }
+  return undefined;
+}
+
 function upsertAccountSection(
   section: RelayChannelSection,
   accountId: string,
@@ -573,6 +672,9 @@ export const relayChannelOpenclawPlugin = {
           : {}),
       };
     },
+    prepareSendPayload({ payload }) {
+      return payload;
+    },
     supportsAction({ action }) {
       return ["send", "typing"].includes(String(action));
     },
@@ -667,6 +769,57 @@ export const relayChannelOpenclawPlugin = {
       }
 
       throw new Error(`Unsupported relay-channel action: ${requestedAction}`);
+    },
+  },
+  message: {
+    id: CHANNEL_ID,
+    durableFinal: {
+      capabilities: {
+        text: true,
+        media: true,
+        payload: true,
+        replyTo: true,
+        thread: true,
+      },
+    },
+    receive: {
+      defaultAckPolicy: "manual",
+      supportedAckPolicies: ["manual"],
+    },
+    send: {
+      text: async ({ cfg, to, text, accountId, replyToId, threadId }) =>
+        await sendRelayMessageThroughSdkAdapter({
+          cfg,
+          accountId,
+          to,
+          text,
+          replyToId,
+          threadId,
+        }),
+      media: async ({ cfg, to, text, mediaUrl, accountId, replyToId, threadId, audioAsVoice, forceDocument }) =>
+        await sendRelayMessageThroughSdkAdapter({
+          cfg,
+          accountId,
+          to,
+          text,
+          mediaUrl,
+          replyToId,
+          threadId,
+          audioAsVoice,
+          forceDocument,
+        }),
+      payload: async ({ cfg, to, text, mediaUrl, payload, accountId, replyToId, threadId, audioAsVoice, forceDocument }) =>
+        await sendRelayMessageThroughSdkAdapter({
+          cfg,
+          accountId,
+          to,
+          text: typeof payload.text === "string" ? payload.text : text,
+          mediaUrl: firstPayloadMediaUrl(payload, mediaUrl),
+          replyToId,
+          threadId,
+          audioAsVoice: audioAsVoice ?? payload.audioAsVoice === true,
+          forceDocument,
+        }),
     },
   },
   outbound: {

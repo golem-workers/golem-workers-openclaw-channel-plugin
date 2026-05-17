@@ -198,6 +198,13 @@ export type ChannelPlugin<TResolvedAccount = unknown> = {
       cfg: OpenClawConfig;
       accountId?: string | null;
     }) => unknown;
+    prepareSendPayload?: (params: {
+      ctx: unknown;
+      to: string;
+      payload: Record<string, unknown>;
+      replyToId?: string | null;
+      threadId?: string | number | null;
+    }) => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
     supportsAction?: (params: { action: string }) => boolean;
     handleAction?: (params: {
       action: string;
@@ -220,6 +227,50 @@ export type ChannelPlugin<TResolvedAccount = unknown> = {
     }) => Promise<unknown>;
     sendMedia?: (input: Record<string, unknown>) => Promise<unknown>;
     requestFileDownload?: (input: Record<string, unknown>) => Promise<unknown>;
+  };
+  message?: {
+    id?: string;
+    durableFinal?: {
+      capabilities?: Record<string, boolean>;
+      reconcileUnknownSend?: (ctx: Record<string, unknown>) => Promise<unknown> | unknown;
+    };
+    receive?: {
+      defaultAckPolicy?: string;
+      supportedAckPolicies?: readonly string[];
+    };
+    send?: {
+      text?: (ctx: {
+        cfg: OpenClawConfig;
+        to: string;
+        text: string;
+        accountId?: string | null;
+        replyToId?: string | null;
+        threadId?: string | number | null;
+      }) => Promise<unknown>;
+      media?: (ctx: {
+        cfg: OpenClawConfig;
+        to: string;
+        text: string;
+        mediaUrl: string;
+        accountId?: string | null;
+        replyToId?: string | null;
+        threadId?: string | number | null;
+        audioAsVoice?: boolean;
+        forceDocument?: boolean;
+      }) => Promise<unknown>;
+      payload?: (ctx: {
+        cfg: OpenClawConfig;
+        to: string;
+        text: string;
+        mediaUrl?: string;
+        payload: Record<string, unknown>;
+        accountId?: string | null;
+        replyToId?: string | null;
+        threadId?: string | number | null;
+        audioAsVoice?: boolean;
+        forceDocument?: boolean;
+      }) => Promise<unknown>;
+    };
   };
   [key: string]: unknown;
 };

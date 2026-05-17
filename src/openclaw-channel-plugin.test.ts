@@ -166,7 +166,7 @@ async function waitForHealthy(cfg: RelayTestConfig, accountId = "default") {
   throw new Error(`Timed out waiting for ${accountId} relay runtime to become healthy`);
 }
 
-describe("relayChannelOpenclawPlugin", () => {
+describe.sequential("relayChannelOpenclawPlugin", () => {
   it("resolves explicit relay targets through messaging fallback", async () => {
     const resolved = await relayChannelOpenclawPlugin.messaging!.targetResolver!.resolveTarget!({
       cfg,
@@ -385,6 +385,112 @@ describe("relayChannelOpenclawPlugin", () => {
       accountId: "send-action",
       account: { accountId: "send-action" } as never,
     } as never);
+  });
+
+  it("sends text through the SDK message adapter and returns a receipt", async () => {
+    const seenActions: Array<{
+      kind: string;
+      payload: Record<string, unknown>;
+      transportTarget?: { channel?: string; chatId?: string };
+    }> = [];
+    const relay = await startMockRelay({
+      onAction(frame) {
+        seenActions.push({
+          kind: frame.action.kind,
+          payload: frame.action.payload,
+          transportTarget: frame.action.transportTarget,
+        });
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "msg-sdk-text",
+              conversationId: "telegram:123",
+              threadId: "topic-42",
+            },
+          },
+        };
+      },
+    });
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          accounts: [{ id: "sdk-text", url: `http://127.0.0.1:${relay.port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "sdk-text",
+      account: { accountId: "sdk-text" } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, "sdk-text");
+
+    const result = await relayChannelOpenclawPlugin.message!.send!.text!({
+      cfg: runtimeCfg as never,
+      to: "telegram:123",
+      text: "SDK relay message",
+      accountId: "sdk-text",
+      replyToId: "parent-1",
+      threadId: "topic-42",
+    });
+
+    expect(result).toMatchObject({
+      messageId: "msg-sdk-text",
+      receipt: {
+        primaryPlatformMessageId: "msg-sdk-text",
+        platformMessageIds: ["msg-sdk-text"],
+        threadId: "topic-42",
+        replyToId: "parent-1",
+        parts: [
+          {
+            platformMessageId: "msg-sdk-text",
+            kind: "text",
+            index: 0,
+          },
+        ],
+      },
+    });
+    expect(seenActions[0]).toMatchObject({
+      kind: "message.send",
+      payload: {
+        text: "SDK relay message",
+      },
+      transportTarget: {
+        channel: "telegram",
+        chatId: "123",
+      },
+    });
+
+    controller.abort();
+    await startTask;
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "sdk-text",
+      account: { accountId: "sdk-text" } as never,
+    } as never);
+  });
+
+  it("prepares message tool send payloads for core SDK delivery", async () => {
+    const payload = {
+      text: "prepared",
+      mediaUrl: "file:///tmp/a.txt",
+    };
+
+    expect(
+      await relayChannelOpenclawPlugin.actions!.prepareSendPayload!({
+        ctx: {},
+        to: "telegram:123",
+        payload,
+      } as never)
+    ).toBe(payload);
   });
 
   it("normalizes plain targets to the inferred provider before relay send", async () => {
