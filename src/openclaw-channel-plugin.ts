@@ -467,6 +467,24 @@ function buildRelayMessagePayload(input: {
   };
 }
 
+function normalizeRelayOutboundPayload(input: { payload: unknown }): unknown {
+  if (!isRecord(input.payload)) {
+    return input.payload;
+  }
+  const mediaUrls = readStringArray(input.payload.mediaUrls);
+  if (mediaUrls.length <= 1) {
+    return input.payload;
+  }
+  const channelData = isRecord(input.payload.channelData) ? input.payload.channelData : {};
+  return {
+    ...input.payload,
+    channelData: {
+      ...channelData,
+      relayChannelMultiMediaPayload: true,
+    },
+  };
+}
+
 function buildMessageReceiptResult(
   result: { transportMessageId?: string; transportMessageIds?: string[]; conversationId?: string; threadId?: string; downloadUrl?: string },
   input: {
@@ -1265,6 +1283,7 @@ export const relayChannelOpenclawPlugin = {
   },
   outbound: {
     deliveryMode: "direct" as const,
+    normalizePayload: normalizeRelayOutboundPayload,
     sendPayload: async (input: any) => {
       const { cfg, to, payload, accountId, replyToId, threadId, forceDocument } = input;
       const text = typeof payload?.text === "string" ? payload.text : "";

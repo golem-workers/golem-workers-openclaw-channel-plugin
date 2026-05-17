@@ -704,6 +704,26 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     } as never);
   });
 
+  it("marks multi-media outbound payloads so OpenClaw uses sendPayload instead of split media sends", () => {
+    const normalizePayload = (relayChannelOpenclawPlugin.outbound as {
+      normalizePayload?: (input: { payload: unknown }) => unknown;
+    } | undefined)?.normalizePayload;
+    expect(normalizePayload).toBeTypeOf("function");
+
+    const payload = normalizePayload?.({
+      payload: {
+        text: "files",
+        mediaUrls: ["/tmp/a.md", "/tmp/b.md", "/tmp/c.md"],
+      },
+    } as never) as { channelData?: Record<string, unknown> } | undefined;
+
+    expect(payload).toMatchObject({
+      text: "files",
+      mediaUrls: ["/tmp/a.md", "/tmp/b.md", "/tmp/c.md"],
+      channelData: { relayChannelMultiMediaPayload: true },
+    });
+  });
+
   it("normalizes plain targets to the inferred provider before relay send", async () => {
     const seenActions: Array<{
       kind: string;
