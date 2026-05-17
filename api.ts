@@ -114,6 +114,7 @@ export type RelayActionPayload = {
 
 export type RelayActionSuccess = {
   transportMessageId?: string;
+  transportMessageIds?: string[];
   conversationId?: string;
   threadId?: string;
   uploadUrl?: string;

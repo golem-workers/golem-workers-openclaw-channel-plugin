@@ -246,6 +246,7 @@ export type ChannelPlugin<TResolvedAccount = unknown> = {
         accountId?: string | null;
         replyToId?: string | null;
         threadId?: string | number | null;
+        silent?: boolean;
       }) => Promise<unknown>;
       media?: (ctx: {
         cfg: OpenClawConfig;
@@ -257,6 +258,7 @@ export type ChannelPlugin<TResolvedAccount = unknown> = {
         threadId?: string | number | null;
         audioAsVoice?: boolean;
         forceDocument?: boolean;
+        silent?: boolean;
       }) => Promise<unknown>;
       payload?: (ctx: {
         cfg: OpenClawConfig;
@@ -269,8 +271,11 @@ export type ChannelPlugin<TResolvedAccount = unknown> = {
         threadId?: string | number | null;
         audioAsVoice?: boolean;
         forceDocument?: boolean;
+        silent?: boolean;
       }) => Promise<unknown>;
+      lifecycle?: Record<string, unknown>;
     };
+    live?: Record<string, unknown>;
   };
   [key: string]: unknown;
 };

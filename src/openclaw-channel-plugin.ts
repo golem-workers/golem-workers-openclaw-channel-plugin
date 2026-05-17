@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   buildChannelConfigSchema,
   createChannelPluginBase,
@@ -163,6 +165,10 @@ function summarizeOutboundPayload(input: { payload: any; text: string }) {
   return {
     textLength: text.length,
     hasMediaUrl: typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0,
+    mediaCount: Array.isArray(payload?.mediaUrls) ? payload.mediaUrls.length : undefined,
+    hasSilent: payload?.silent === true,
+    hasNativeQuote: isRecord(payload?.nativeQuote),
+    hasRichPayload: Boolean(payload?.presentation || payload?.interactive || payload?.channelData),
   };
 }
 
@@ -318,20 +324,133 @@ function extractTextAttachmentMedia(input: string): {
   return { text, mediaUrls };
 }
 
+type RelaySdkOutboundPayload = {
+  text: string;
+  mediaUrls: string[];
+  audioAsVoice: boolean;
+  forceDocument: boolean;
+  silent: boolean;
+  nativeQuote?: Record<string, unknown>;
+  presentation?: unknown;
+  interactive?: unknown;
+  channelData?: Record<string, unknown>;
+};
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+function collectAttachmentMediaUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const urls: string[] = [];
+  for (const attachment of value) {
+    if (!isRecord(attachment)) {
+      continue;
+    }
+    for (const key of ["media", "mediaUrl", "path", "filePath", "fileUrl", "url"]) {
+      const candidate = attachment[key];
+      if (typeof candidate === "string" && candidate.trim()) {
+        urls.push(candidate);
+      }
+    }
+  }
+  return urls;
+}
+
+function uniqueNonEmptyStrings(values: readonly (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function renderRichPayloadFallback(payload: Record<string, unknown>): string {
+  const lines: string[] = [];
+  if (payload.presentation !== undefined) {
+    lines.push(`Presentation: ${JSON.stringify(payload.presentation)}`);
+  }
+  if (payload.interactive !== undefined) {
+    lines.push(`Interactive: ${JSON.stringify(payload.interactive)}`);
+  }
+  return lines.join("\n");
+}
+
+function normalizeSdkOutboundPayload(input: {
+  text?: string | null;
+  mediaUrl?: string | null;
+  payload?: Record<string, unknown>;
+  audioAsVoice?: boolean;
+  forceDocument?: boolean;
+  silent?: boolean;
+}): RelaySdkOutboundPayload {
+  const payload = input.payload ?? {};
+  const rawText =
+    (typeof payload.text === "string" ? payload.text : undefined) ??
+    input.text ??
+    "";
+  const parsedTextAttachments = input.mediaUrl || payload.mediaUrl ? { text: rawText, mediaUrls: [] } : extractTextAttachmentMedia(rawText);
+  const mediaUrls = uniqueNonEmptyStrings([
+    input.mediaUrl,
+    typeof payload.mediaUrl === "string" ? payload.mediaUrl : undefined,
+    ...readStringArray(payload.mediaUrls),
+    ...collectAttachmentMediaUrls(payload.attachments),
+    ...parsedTextAttachments.mediaUrls,
+  ]);
+  const richFallback = renderRichPayloadFallback(payload);
+  const text = [parsedTextAttachments.text.trim(), richFallback]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n");
+  const nativeQuote = isRecord(payload.nativeQuote)
+    ? payload.nativeQuote
+    : isRecord(payload.quote)
+      ? payload.quote
+      : undefined;
+  const channelData = isRecord(payload.channelData) ? payload.channelData : undefined;
+  return {
+    text,
+    mediaUrls,
+    audioAsVoice: input.audioAsVoice ?? payload.audioAsVoice === true,
+    forceDocument: input.forceDocument ?? payload.forceDocument === true,
+    silent: input.silent ?? payload.silent === true,
+    ...(nativeQuote ? { nativeQuote } : {}),
+    ...(payload.presentation !== undefined ? { presentation: payload.presentation } : {}),
+    ...(payload.interactive !== undefined ? { interactive: payload.interactive } : {}),
+    ...(channelData ? { channelData } : {}),
+  };
+}
+
 function buildMessageReceiptResult(
-  result: { transportMessageId?: string; conversationId?: string; threadId?: string; downloadUrl?: string },
+  result: { transportMessageId?: string; transportMessageIds?: string[]; conversationId?: string; threadId?: string; downloadUrl?: string },
   input: {
-    kind: "text" | "media";
+    kind: "text" | "media" | "voice" | "unknown";
     fallbackMessageId: string;
     replyToId?: string | null;
     threadId?: string | number | null;
+    sentAt?: number;
   }
 ) {
+  const transportIds = uniqueNonEmptyStrings([
+    ...(Array.isArray(result.transportMessageIds) ? result.transportMessageIds : []),
+    result.transportMessageId,
+  ]);
+  const messageIds =
+    transportIds.length > 0
+      ? transportIds
+      : uniqueNonEmptyStrings([result.downloadUrl, result.conversationId, input.fallbackMessageId]);
   const messageId =
-    result.transportMessageId ??
-    result.conversationId ??
-    result.downloadUrl ??
-    input.fallbackMessageId;
+    messageIds[0] ?? input.fallbackMessageId;
   const stringThreadId =
     result.threadId ?? (input.threadId !== undefined && input.threadId !== null ? String(input.threadId) : undefined);
   const stringReplyToId =
@@ -340,24 +459,40 @@ function buildMessageReceiptResult(
     messageId,
     receipt: {
       primaryPlatformMessageId: messageId,
-      platformMessageIds: [messageId],
-      parts: [
-        {
-          platformMessageId: messageId,
-          kind: input.kind,
-          index: 0,
-          raw: {
-            channel: CHANNEL_ID,
-            messageId,
-            conversationId: result.conversationId,
-            threadId: result.threadId,
-            meta: result,
-          },
+      platformMessageIds: messageIds,
+      parts: messageIds.map((platformMessageId, index) => ({
+        platformMessageId,
+        kind: input.kind,
+        index,
+        raw: {
+          channel: CHANNEL_ID,
+          messageId: platformMessageId,
+          conversationId: result.conversationId,
+          threadId: result.threadId,
+          meta: result,
         },
-      ],
+      })),
       ...(stringThreadId ? { threadId: stringThreadId } : {}),
       ...(stringReplyToId ? { replyToId: stringReplyToId } : {}),
-      sentAt: Date.now(),
+      sentAt: input.sentAt ?? Date.now(),
+    },
+  };
+}
+
+function mergeMessageReceiptResults(results: Array<ReturnType<typeof buildMessageReceiptResult>>) {
+  const allIds = uniqueNonEmptyStrings(results.flatMap((result) => result.receipt.platformMessageIds));
+  const primary = allIds[0] ?? "relay-message";
+  const first = results[0];
+  const sentAt = first?.receipt.sentAt ?? Date.now();
+  return {
+    messageId: primary,
+    receipt: {
+      primaryPlatformMessageId: primary,
+      platformMessageIds: allIds,
+      parts: results.flatMap((result) => result.receipt.parts).map((part, index) => ({ ...part, index })),
+      ...(first?.receipt.threadId ? { threadId: first.receipt.threadId } : {}),
+      ...(first?.receipt.replyToId ? { replyToId: first.receipt.replyToId } : {}),
+      sentAt,
     },
   };
 }
@@ -372,6 +507,8 @@ async function sendRelayMessageThroughSdkAdapter(input: {
   threadId?: string | number | null;
   audioAsVoice?: boolean;
   forceDocument?: boolean;
+  silent?: boolean;
+  payload?: Record<string, unknown>;
 }) {
   const runtime = await ensureRuntimeStarted(input.cfg, input.accountId);
   const { target, explicitThreadId } = resolveOutboundTarget(
@@ -379,28 +516,66 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     input.threadId ?? null,
     inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(input.to))
   );
-  const text = input.text?.trim() ?? "";
-  const parsedTextAttachments = input.mediaUrl ? { text, mediaUrls: [] } : extractTextAttachmentMedia(text);
-  const textForSend = parsedTextAttachments.text;
-  const mediaUrl = input.mediaUrl?.trim() ?? parsedTextAttachments.mediaUrls[0] ?? "";
+  const normalizedPayload = normalizeSdkOutboundPayload({
+    text: input.text,
+    mediaUrl: input.mediaUrl,
+    payload: input.payload,
+    audioAsVoice: input.audioAsVoice,
+    forceDocument: input.forceDocument,
+    silent: input.silent,
+  });
   const replyToTransportMessageId = sanitizeReplyToTransportMessageId({
     channel: target.transportTarget.channel,
     replyToId: input.replyToId ?? null,
   });
+  const commonPayload = {
+    ...(normalizedPayload.audioAsVoice === true ? { asVoice: true } : {}),
+    ...(normalizedPayload.forceDocument === true ? { forceDocument: true } : {}),
+    ...(normalizedPayload.silent === true ? { silent: true } : {}),
+    ...(normalizedPayload.nativeQuote ? { nativeQuote: normalizedPayload.nativeQuote } : {}),
+    ...(normalizedPayload.presentation !== undefined ? { presentation: normalizedPayload.presentation } : {}),
+    ...(normalizedPayload.interactive !== undefined ? { interactive: normalizedPayload.interactive } : {}),
+    ...(normalizedPayload.channelData ? { channelData: normalizedPayload.channelData } : {}),
+  };
+  const mediaUrls = normalizedPayload.mediaUrls;
+  if (mediaUrls.length > 0) {
+    const sentAt = Date.now();
+    const results = [];
+    for (let index = 0; index < mediaUrls.length; index += 1) {
+      const mediaUrl = mediaUrls[index];
+      const result = await runtime.sendAction({
+        kind: "message.send",
+        target,
+        payload: {
+          ...(index === 0 && normalizedPayload.text ? { text: normalizedPayload.text } : {}),
+          mediaUrl,
+          ...commonPayload,
+        } as any,
+        replyToTransportMessageId,
+        explicitThreadId,
+      });
+      results.push(buildMessageReceiptResult(result, {
+        kind: normalizedPayload.audioAsVoice ? "voice" : "media",
+        fallbackMessageId: `relay-message-${index}`,
+        replyToId: replyToTransportMessageId,
+        threadId: explicitThreadId ?? input.threadId ?? null,
+        sentAt,
+      }));
+    }
+    return mergeMessageReceiptResults(results);
+  }
   const result = await runtime.sendAction({
     kind: "message.send",
     target,
     payload: {
-      ...(textForSend ? { text: textForSend } : {}),
-      ...(mediaUrl ? { mediaUrl } : {}),
-      ...(input.audioAsVoice === true ? { asVoice: true } : {}),
-      ...(input.forceDocument === true ? { forceDocument: true } : {}),
-    },
+      ...(normalizedPayload.text ? { text: normalizedPayload.text } : {}),
+      ...commonPayload,
+    } as any,
     replyToTransportMessageId,
     explicitThreadId,
   });
   return buildMessageReceiptResult(result, {
-    kind: mediaUrl ? "media" : "text",
+    kind: "text",
     fallbackMessageId: "relay-message",
     replyToId: replyToTransportMessageId,
     threadId: explicitThreadId ?? input.threadId ?? null,
@@ -456,6 +631,40 @@ function upsertAccountSection(
 
 const statusRegistry = new RelayStatusRegistry();
 const runtimes = new Map<string, RelayAccountRuntime>();
+const sendLifecycleRecords = new Map<
+  string,
+  {
+    signature: string;
+    status: "started" | "sent" | "failed" | "committed";
+    startedAt: number;
+    result?: ReturnType<typeof buildMessageReceiptResult> | ReturnType<typeof mergeMessageReceiptResults>;
+    error?: string;
+  }
+>();
+
+function pruneSendLifecycleRecords(now = Date.now()) {
+  const ttlMs = 1000 * 60 * 60;
+  for (const [key, record] of sendLifecycleRecords) {
+    if (now - record.startedAt > ttlMs) {
+      sendLifecycleRecords.delete(key);
+    }
+  }
+}
+
+function buildSendSignature(ctx: Record<string, unknown>): string {
+  const payload = isRecord(ctx.payload) ? ctx.payload : {};
+  return JSON.stringify({
+    channel: ctx.channel ?? CHANNEL_ID,
+    to: ctx.to,
+    accountId: ctx.accountId ?? null,
+    threadId: ctx.threadId ?? null,
+    replyToId: ctx.replyToId ?? null,
+    text: typeof ctx.text === "string" ? ctx.text : typeof payload.text === "string" ? payload.text : null,
+    mediaUrl: typeof ctx.mediaUrl === "string" ? ctx.mediaUrl : null,
+    mediaUrls: Array.isArray(payload.mediaUrls) ? payload.mediaUrls : null,
+    silent: ctx.silent === true || payload.silent === true,
+  });
+}
 
 function getRuntime(cfg: OpenClawConfig, accountId?: string | null) {
   const resolvedAccountId = resolvePluginAccountId(cfg, accountId);
@@ -842,8 +1051,45 @@ export const relayChannelOpenclawPlugin = {
         text: true,
         media: true,
         payload: true,
+        silent: true,
         replyTo: true,
         thread: true,
+        nativeQuote: true,
+        batch: true,
+        reconcileUnknownSend: true,
+        messageSendingHooks: true,
+        afterSendSuccess: true,
+        afterCommit: true,
+      },
+      reconcileUnknownSend(ctx) {
+        pruneSendLifecycleRecords();
+        const signature = buildSendSignature(ctx);
+        const matched = Array.from(sendLifecycleRecords.values())
+          .filter((record) => record.signature === signature)
+          .sort((a, b) => b.startedAt - a.startedAt)[0];
+        if (matched?.status === "sent" || matched?.status === "committed") {
+          return matched.result
+            ? { status: "sent", receipt: matched.result.receipt, messageId: matched.result.messageId }
+            : { status: "unresolved", retryable: true, error: "send record has no receipt" };
+        }
+        if (!ctx.platformSendStartedAt) {
+          return { status: "not_sent" };
+        }
+        return {
+          status: "unresolved",
+          retryable: true,
+          error: matched?.error ?? "relay-channel send state is not durably recoverable",
+        };
+      },
+    },
+    live: {
+      capabilities: {
+        previewFinalization: true,
+      },
+      finalizer: {
+        capabilities: {
+          normalFallback: true,
+        },
       },
     },
     receive: {
@@ -851,7 +1097,7 @@ export const relayChannelOpenclawPlugin = {
       supportedAckPolicies: ["manual"],
     },
     send: {
-      text: async ({ cfg, to, text, accountId, replyToId, threadId }) =>
+      text: async ({ cfg, to, text, accountId, replyToId, threadId, silent }) =>
         await sendRelayMessageThroughSdkAdapter({
           cfg,
           accountId,
@@ -859,8 +1105,9 @@ export const relayChannelOpenclawPlugin = {
           text,
           replyToId,
           threadId,
+          silent,
         }),
-      media: async ({ cfg, to, text, mediaUrl, accountId, replyToId, threadId, audioAsVoice, forceDocument }) =>
+      media: async ({ cfg, to, text, mediaUrl, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent }) =>
         await sendRelayMessageThroughSdkAdapter({
           cfg,
           accountId,
@@ -871,19 +1118,83 @@ export const relayChannelOpenclawPlugin = {
           threadId,
           audioAsVoice,
           forceDocument,
+          silent,
         }),
-      payload: async ({ cfg, to, text, mediaUrl, payload, accountId, replyToId, threadId, audioAsVoice, forceDocument }) =>
+      payload: async ({ cfg, to, text, mediaUrl, payload, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent }) =>
         await sendRelayMessageThroughSdkAdapter({
           cfg,
           accountId,
           to,
           text: typeof payload.text === "string" ? payload.text : text,
           mediaUrl: firstPayloadMediaUrl(payload, mediaUrl),
+          payload,
           replyToId,
           threadId,
           audioAsVoice: audioAsVoice ?? payload.audioAsVoice === true,
           forceDocument,
+          silent,
         }),
+      lifecycle: {
+        beforeSendAttempt(ctx: Record<string, unknown>) {
+          pruneSendLifecycleRecords();
+          const token = randomUUID();
+          sendLifecycleRecords.set(token, {
+            signature: buildSendSignature(ctx),
+            status: "started",
+            startedAt: Date.now(),
+          });
+          logRuntimeEvent("info", "relay-channel SDK send attempt started", {
+            token,
+            kind: ctx.kind,
+            to: ctx.to,
+          });
+          return token;
+        },
+        afterSendSuccess(ctx: Record<string, unknown>) {
+          const token = typeof ctx.attemptToken === "string" ? ctx.attemptToken : null;
+          if (!token) {
+            return;
+          }
+          const existing = sendLifecycleRecords.get(token);
+          if (!existing) {
+            return;
+          }
+          sendLifecycleRecords.set(token, {
+            ...existing,
+            status: "sent",
+            result: isRecord(ctx.result) ? (ctx.result as any) : undefined,
+          });
+        },
+        afterSendFailure(ctx: Record<string, unknown>) {
+          const token = typeof ctx.attemptToken === "string" ? ctx.attemptToken : null;
+          if (!token) {
+            return;
+          }
+          const existing = sendLifecycleRecords.get(token);
+          if (!existing) {
+            return;
+          }
+          sendLifecycleRecords.set(token, {
+            ...existing,
+            status: "failed",
+            error: ctx.error instanceof Error ? ctx.error.message : String(ctx.error ?? "unknown error"),
+          });
+        },
+        afterCommit(ctx: Record<string, unknown>) {
+          const token = typeof ctx.attemptToken === "string" ? ctx.attemptToken : null;
+          if (!token) {
+            return;
+          }
+          const existing = sendLifecycleRecords.get(token);
+          if (!existing) {
+            return;
+          }
+          sendLifecycleRecords.set(token, {
+            ...existing,
+            status: "committed",
+          });
+        },
+      },
     },
   },
   outbound: {

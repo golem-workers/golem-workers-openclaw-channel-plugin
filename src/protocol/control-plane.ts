@@ -159,6 +159,7 @@ export const transportActionCompletedEventSchema = z.object({
     actionId: z.string(),
     result: z.object({
       transportMessageId: z.string().optional(),
+      transportMessageIds: z.array(z.string()).optional(),
       conversationId: z.string().optional(),
       threadId: z.string().optional(),
       uploadUrl: z.string().url().optional(),
