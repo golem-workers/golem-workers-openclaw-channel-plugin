@@ -397,11 +397,14 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     }> = [];
     const relay = await startMockRelay({
       onAction(frame) {
+        const action = frame.action as typeof frame.action & {
+          reply?: { replyToTransportMessageId?: string | null };
+        };
         seenActions.push({
-          kind: frame.action.kind,
-          payload: frame.action.payload,
-          transportTarget: frame.action.transportTarget,
-          replyToTransportMessageId: frame.action.reply?.replyToTransportMessageId,
+          kind: action.kind,
+          payload: action.payload,
+          transportTarget: action.transportTarget,
+          replyToTransportMessageId: action.reply?.replyToTransportMessageId,
         });
         return {
           type: "event",
@@ -480,6 +483,20 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       replyToId: "run-not-a-telegram-message-id",
     });
     expect(seenActions[1]?.replyToTransportMessageId).toBeFalsy();
+
+    await relayChannelOpenclawPlugin.message!.send!.text!({
+      cfg: runtimeCfg as never,
+      to: "telegram:123",
+      text: "Attached: [multistep.txt](/root/.openclaw/workspace/multistep.txt)",
+      accountId: "sdk-text",
+    });
+    expect(seenActions[2]).toMatchObject({
+      kind: "message.send",
+      payload: {
+        text: "Attached: multistep.txt",
+        mediaUrl: "/root/.openclaw/workspace/multistep.txt",
+      },
+    });
 
     controller.abort();
     await startTask;

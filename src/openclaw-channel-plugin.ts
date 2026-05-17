@@ -274,6 +274,50 @@ function sanitizeReplyToTransportMessageId(input: {
   return value;
 }
 
+function isLocalAttachmentUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/^(https?:|mailto:|tel:|#)/i.test(trimmed)) {
+    return false;
+  }
+  return /^(file:\/\/|\/|\.\/|\.\.\/|~\/)/.test(trimmed);
+}
+
+function decodeMarkdownUrl(value: string): string {
+  try {
+    return decodeURI(value);
+  } catch {
+    return value;
+  }
+}
+
+function extractTextAttachmentMedia(input: string): {
+  text: string;
+  mediaUrls: string[];
+} {
+  const mediaUrls: string[] = [];
+  const seen = new Set<string>();
+  let text = input.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (match, label: string, rawUrl: string) => {
+    const url = decodeMarkdownUrl(rawUrl.trim());
+    if (!isLocalAttachmentUrl(url)) {
+      return match;
+    }
+    if (!seen.has(url)) {
+      seen.add(url);
+      mediaUrls.push(url);
+    }
+    return label.trim();
+  });
+  text = text
+    .split("\n")
+    .map((line) => line.replace(/^\s*Attached:\s*$/i, "Attached").trimEnd())
+    .join("\n")
+    .trim();
+  return { text, mediaUrls };
+}
+
 function buildMessageReceiptResult(
   result: { transportMessageId?: string; conversationId?: string; threadId?: string; downloadUrl?: string },
   input: {
@@ -336,7 +380,9 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(input.to))
   );
   const text = input.text?.trim() ?? "";
-  const mediaUrl = input.mediaUrl?.trim() ?? "";
+  const parsedTextAttachments = input.mediaUrl ? { text, mediaUrls: [] } : extractTextAttachmentMedia(text);
+  const textForSend = parsedTextAttachments.text;
+  const mediaUrl = input.mediaUrl?.trim() ?? parsedTextAttachments.mediaUrls[0] ?? "";
   const replyToTransportMessageId = sanitizeReplyToTransportMessageId({
     channel: target.transportTarget.channel,
     replyToId: input.replyToId ?? null,
@@ -345,7 +391,7 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     kind: "message.send",
     target,
     payload: {
-      ...(text ? { text } : {}),
+      ...(textForSend ? { text: textForSend } : {}),
       ...(mediaUrl ? { mediaUrl } : {}),
       ...(input.audioAsVoice === true ? { asVoice: true } : {}),
       ...(input.forceDocument === true ? { forceDocument: true } : {}),
