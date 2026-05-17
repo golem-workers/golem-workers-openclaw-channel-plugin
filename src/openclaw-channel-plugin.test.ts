@@ -119,6 +119,7 @@ async function startMockRelay(options?: {
                 kind: string;
                 payload: Record<string, unknown>;
                 transportTarget?: { channel?: string; chatId?: string };
+                reply?: { replyToTransportMessageId?: string | null };
               };
             }
           ) ?? {
@@ -392,6 +393,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       kind: string;
       payload: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
+      replyToTransportMessageId?: string | null;
     }> = [];
     const relay = await startMockRelay({
       onAction(frame) {
@@ -399,6 +401,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
           kind: frame.action.kind,
           payload: frame.action.payload,
           transportTarget: frame.action.transportTarget,
+          replyToTransportMessageId: frame.action.reply?.replyToTransportMessageId,
         });
         return {
           type: "event",
@@ -438,7 +441,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       to: "telegram:123",
       text: "SDK relay message",
       accountId: "sdk-text",
-      replyToId: "parent-1",
+      replyToId: "789",
       threadId: "topic-42",
     });
 
@@ -448,7 +451,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
         primaryPlatformMessageId: "msg-sdk-text",
         platformMessageIds: ["msg-sdk-text"],
         threadId: "topic-42",
-        replyToId: "parent-1",
+        replyToId: "789",
         parts: [
           {
             platformMessageId: "msg-sdk-text",
@@ -468,6 +471,15 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
         chatId: "123",
       },
     });
+
+    await relayChannelOpenclawPlugin.message!.send!.text!({
+      cfg: runtimeCfg as never,
+      to: "telegram:123",
+      text: "SDK relay message without Telegram reply id",
+      accountId: "sdk-text",
+      replyToId: "run-not-a-telegram-message-id",
+    });
+    expect(seenActions[1]?.replyToTransportMessageId).toBeFalsy();
 
     controller.abort();
     await startTask;

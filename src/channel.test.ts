@@ -139,7 +139,7 @@ async function startMockRelay(options: MockRelayOptions = {}) {
   };
 }
 
-describe("relay channel plugin", () => {
+describe.sequential("relay channel plugin", () => {
   it("parses config and resolves account urls", () => {
     const config = parseRelayChannelPluginConfig({
       port: 9999,

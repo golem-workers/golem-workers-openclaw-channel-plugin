@@ -260,6 +260,20 @@ function buildOpenClawOutboundResult(
   };
 }
 
+function sanitizeReplyToTransportMessageId(input: {
+  channel?: string;
+  replyToId?: string | null;
+}): string | null {
+  const value = input.replyToId?.trim();
+  if (!value) {
+    return null;
+  }
+  if (input.channel === "telegram") {
+    return /^\d+$/.test(value) ? value : null;
+  }
+  return value;
+}
+
 function buildMessageReceiptResult(
   result: { transportMessageId?: string; conversationId?: string; threadId?: string; downloadUrl?: string },
   input: {
@@ -323,6 +337,10 @@ async function sendRelayMessageThroughSdkAdapter(input: {
   );
   const text = input.text?.trim() ?? "";
   const mediaUrl = input.mediaUrl?.trim() ?? "";
+  const replyToTransportMessageId = sanitizeReplyToTransportMessageId({
+    channel: target.transportTarget.channel,
+    replyToId: input.replyToId ?? null,
+  });
   const result = await runtime.sendAction({
     kind: "message.send",
     target,
@@ -332,13 +350,13 @@ async function sendRelayMessageThroughSdkAdapter(input: {
       ...(input.audioAsVoice === true ? { asVoice: true } : {}),
       ...(input.forceDocument === true ? { forceDocument: true } : {}),
     },
-    replyToTransportMessageId: input.replyToId ?? null,
+    replyToTransportMessageId,
     explicitThreadId,
   });
   return buildMessageReceiptResult(result, {
     kind: mediaUrl ? "media" : "text",
     fallbackMessageId: "relay-message",
-    replyToId: input.replyToId ?? null,
+    replyToId: replyToTransportMessageId,
     threadId: explicitThreadId ?? input.threadId ?? null,
   });
 }
