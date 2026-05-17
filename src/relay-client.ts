@@ -118,6 +118,37 @@ export class RelayClient extends EventEmitter {
     }
   }
 
+  public async reconcileAction(input: {
+    provider?: string;
+    actionId?: string;
+    idempotencyKey?: string;
+  }): Promise<
+    | { status: "sent"; messageId?: string; receipt: RelayActionSuccess }
+    | { status: "not_sent" }
+    | { status: "unresolved"; retryable: boolean; error: string }
+  > {
+    if (!this.started) {
+      throw new Error("ACCOUNT_NOT_READY: account runtime has not been started");
+    }
+    const response = await fetchWithTimeout(`${this.options.url}/actions/reconcile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }, this.options.requestTimeoutMs);
+    const json = (await response.json()) as unknown;
+    if (!response.ok) {
+      throw new Error(`Relay reconcile failed: ${JSON.stringify(json)}`);
+    }
+    if (isRelayReconcileResult(json)) {
+      return json;
+    }
+    throw new Error(`Unexpected relay reconcile response: ${JSON.stringify(json)}`);
+  }
+
+  public getAccountId(): string {
+    return this.options.accountId;
+  }
+
   public ingestEvent(rawEvent: Record<string, unknown>) {
     const event = controlPlaneEventSchema.parse(rawEvent);
     switch (event.eventType) {
@@ -408,6 +439,26 @@ export class RelayClient extends EventEmitter {
       this.healthcheckTimer = null;
     }
   }
+}
+
+function isRelayReconcileResult(value: unknown): value is
+  | { status: "sent"; messageId?: string; receipt: RelayActionSuccess }
+  | { status: "not_sent" }
+  | { status: "unresolved"; retryable: boolean; error: string } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.status === "not_sent") {
+    return true;
+  }
+  if (record.status === "unresolved") {
+    return typeof record.retryable === "boolean" && typeof record.error === "string";
+  }
+  if (record.status === "sent") {
+    return Boolean(record.receipt && typeof record.receipt === "object");
+  }
+  return false;
 }
 
 function isFatalStartupError(error: unknown): boolean {

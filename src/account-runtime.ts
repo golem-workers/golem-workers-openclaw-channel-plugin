@@ -215,6 +215,17 @@ export class RelayAccountRuntime {
     };
     return await this.client.dispatchAction(action);
   }
+
+  public async reconcileAction(input: {
+    provider?: string;
+    actionId?: string;
+    idempotencyKey?: string;
+  }) {
+    if (!this.client) {
+      throw new Error("ACCOUNT_NOT_READY: account runtime has not been started");
+    }
+    return await this.client.reconcileAction(input);
+  }
 }
 
 function pickRecoveryState(status: RelayAccountStatus): Partial<RelayRecoveryState> {

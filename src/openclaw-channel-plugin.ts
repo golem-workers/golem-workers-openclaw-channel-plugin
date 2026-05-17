@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import {
   buildChannelConfigSchema,
@@ -162,10 +162,15 @@ function summarizeResolvedTarget(target: {
 
 function summarizeOutboundPayload(input: { payload: any; text: string }) {
   const { payload, text } = input;
+  const mediaCount = uniqueNonEmptyStrings([
+    typeof payload?.mediaUrl === "string" ? payload.mediaUrl : undefined,
+    ...readStringArray(payload?.mediaUrls),
+    ...collectAttachmentMediaUrls(payload?.attachments),
+  ]).length;
   return {
     textLength: text.length,
     hasMediaUrl: typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0,
-    mediaCount: Array.isArray(payload?.mediaUrls) ? payload.mediaUrls.length : undefined,
+    mediaCount: mediaCount > 0 ? mediaCount : undefined,
     hasSilent: payload?.silent === true,
     hasNativeQuote: isRecord(payload?.nativeQuote),
     hasRichPayload: Boolean(payload?.presentation || payload?.interactive || payload?.channelData),
@@ -173,11 +178,13 @@ function summarizeOutboundPayload(input: { payload: any; text: string }) {
 }
 
 function summarizeMessageActionParams(params: Record<string, unknown>) {
+  const mediaCount = collectMessageActionMediaUrls(params).length;
   return {
     hasTarget: typeof params.target === "string" && params.target.trim().length > 0,
     hasTo: typeof params.to === "string" && params.to.trim().length > 0,
     hasMessage:
       typeof params.message === "string" || typeof params.content === "string",
+    mediaCount: mediaCount > 0 ? mediaCount : undefined,
     hasTransportMessageId:
       typeof params.messageId === "string" ||
       typeof params.messageId === "number" ||
@@ -362,6 +369,19 @@ function collectAttachmentMediaUrls(value: unknown): string[] {
   return urls;
 }
 
+function collectMessageActionMediaUrls(params: Record<string, unknown>): string[] {
+  return uniqueNonEmptyStrings([
+    readStringParam(params, "media", { trim: false }),
+    readStringParam(params, "mediaUrl", { trim: false }),
+    readStringParam(params, "path", { trim: false }),
+    readStringParam(params, "filePath", { trim: false }),
+    readStringParam(params, "fileUrl", { trim: false }),
+    ...readStringArray(params.mediaUrls),
+    ...readStringArray(params.files),
+    ...collectAttachmentMediaUrls(params.attachments),
+  ]);
+}
+
 function uniqueNonEmptyStrings(values: readonly (string | null | undefined)[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -431,6 +451,22 @@ function normalizeSdkOutboundPayload(input: {
   };
 }
 
+function buildRelayMessagePayload(input: {
+  text: string;
+  mediaUrls: string[];
+  commonPayload?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    ...(input.text ? { text: input.text } : {}),
+    ...(input.mediaUrls.length > 1
+      ? { mediaUrls: input.mediaUrls }
+      : input.mediaUrls[0]
+        ? { mediaUrl: input.mediaUrls[0] }
+        : {}),
+    ...(input.commonPayload ?? {}),
+  };
+}
+
 function buildMessageReceiptResult(
   result: { transportMessageId?: string; transportMessageIds?: string[]; conversationId?: string; threadId?: string; downloadUrl?: string },
   input: {
@@ -479,24 +515,6 @@ function buildMessageReceiptResult(
   };
 }
 
-function mergeMessageReceiptResults(results: Array<ReturnType<typeof buildMessageReceiptResult>>) {
-  const allIds = uniqueNonEmptyStrings(results.flatMap((result) => result.receipt.platformMessageIds));
-  const primary = allIds[0] ?? "relay-message";
-  const first = results[0];
-  const sentAt = first?.receipt.sentAt ?? Date.now();
-  return {
-    messageId: primary,
-    receipt: {
-      primaryPlatformMessageId: primary,
-      platformMessageIds: allIds,
-      parts: results.flatMap((result) => result.receipt.parts).map((part, index) => ({ ...part, index })),
-      ...(first?.receipt.threadId ? { threadId: first.receipt.threadId } : {}),
-      ...(first?.receipt.replyToId ? { replyToId: first.receipt.replyToId } : {}),
-      sentAt,
-    },
-  };
-}
-
 async function sendRelayMessageThroughSdkAdapter(input: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -508,6 +526,7 @@ async function sendRelayMessageThroughSdkAdapter(input: {
   audioAsVoice?: boolean;
   forceDocument?: boolean;
   silent?: boolean;
+  idempotencyKey?: string | null;
   payload?: Record<string, unknown>;
 }) {
   const runtime = await ensureRuntimeStarted(input.cfg, input.accountId);
@@ -538,31 +557,41 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     ...(normalizedPayload.channelData ? { channelData: normalizedPayload.channelData } : {}),
   };
   const mediaUrls = normalizedPayload.mediaUrls;
+  const idempotencyKey = input.idempotencyKey ?? buildStableSendIdempotencyKey({
+    channel: CHANNEL_ID,
+    to: input.to,
+    accountId: input.accountId ?? null,
+    threadId: input.threadId ?? null,
+    replyToId: input.replyToId ?? null,
+    text: normalizedPayload.text,
+    payload: buildRelayMessagePayload({
+      text: normalizedPayload.text,
+      mediaUrls,
+      commonPayload,
+    }),
+    silent: normalizedPayload.silent,
+  });
   if (mediaUrls.length > 0) {
     const sentAt = Date.now();
-    const results = [];
-    for (let index = 0; index < mediaUrls.length; index += 1) {
-      const mediaUrl = mediaUrls[index];
-      const result = await runtime.sendAction({
-        kind: "message.send",
-        target,
-        payload: {
-          ...(index === 0 && normalizedPayload.text ? { text: normalizedPayload.text } : {}),
-          mediaUrl,
-          ...commonPayload,
-        } as any,
-        replyToTransportMessageId,
-        explicitThreadId,
-      });
-      results.push(buildMessageReceiptResult(result, {
-        kind: normalizedPayload.audioAsVoice ? "voice" : "media",
-        fallbackMessageId: `relay-message-${index}`,
-        replyToId: replyToTransportMessageId,
-        threadId: explicitThreadId ?? input.threadId ?? null,
-        sentAt,
-      }));
-    }
-    return mergeMessageReceiptResults(results);
+    const result = await runtime.sendAction({
+      kind: "message.send",
+      target,
+      payload: buildRelayMessagePayload({
+        text: normalizedPayload.text,
+        mediaUrls,
+        commonPayload,
+      }) as any,
+      replyToTransportMessageId,
+      explicitThreadId,
+      idempotencyKey,
+    });
+    return buildMessageReceiptResult(result, {
+      kind: normalizedPayload.audioAsVoice ? "voice" : "media",
+      fallbackMessageId: "relay-message-media",
+      replyToId: replyToTransportMessageId,
+      threadId: explicitThreadId ?? input.threadId ?? null,
+      sentAt,
+    });
   }
   const result = await runtime.sendAction({
     kind: "message.send",
@@ -573,6 +602,7 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     } as any,
     replyToTransportMessageId,
     explicitThreadId,
+    idempotencyKey,
   });
   return buildMessageReceiptResult(result, {
     kind: "text",
@@ -580,22 +610,6 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     replyToId: replyToTransportMessageId,
     threadId: explicitThreadId ?? input.threadId ?? null,
   });
-}
-
-function firstPayloadMediaUrl(payload: Record<string, unknown>, fallback?: string): string | undefined {
-  if (typeof fallback === "string" && fallback.trim()) {
-    return fallback;
-  }
-  const mediaUrl = payload.mediaUrl;
-  if (typeof mediaUrl === "string" && mediaUrl.trim()) {
-    return mediaUrl;
-  }
-  const mediaUrls = payload.mediaUrls;
-  if (Array.isArray(mediaUrls)) {
-    const first = mediaUrls.find((item): item is string => typeof item === "string" && item.trim().length > 0);
-    return first;
-  }
-  return undefined;
 }
 
 function upsertAccountSection(
@@ -637,7 +651,7 @@ const sendLifecycleRecords = new Map<
     signature: string;
     status: "started" | "sent" | "failed" | "committed";
     startedAt: number;
-    result?: ReturnType<typeof buildMessageReceiptResult> | ReturnType<typeof mergeMessageReceiptResults>;
+    result?: ReturnType<typeof buildMessageReceiptResult>;
     error?: string;
   }
 >();
@@ -664,6 +678,10 @@ function buildSendSignature(ctx: Record<string, unknown>): string {
     mediaUrls: Array.isArray(payload.mediaUrls) ? payload.mediaUrls : null,
     silent: ctx.silent === true || payload.silent === true,
   });
+}
+
+function buildStableSendIdempotencyKey(ctx: Record<string, unknown>): string {
+  return `relay-channel:${createHash("sha256").update(buildSendSignature(ctx)).digest("hex")}`;
 }
 
 function getRuntime(cfg: OpenClawConfig, accountId?: string | null) {
@@ -980,18 +998,18 @@ export const relayChannelOpenclawPlugin = {
           readStringParam(params, "message") ??
           readStringParam(params, "content") ??
           "";
-        const mediaUrl =
-          readStringParam(params, "media", { trim: false }) ??
-          readStringParam(params, "mediaUrl", { trim: false }) ??
-          readStringParam(params, "path", { trim: false }) ??
-          readStringParam(params, "filePath", { trim: false }) ??
-          readStringParam(params, "fileUrl", { trim: false }) ??
-          undefined;
+        const mediaUrls = collectMessageActionMediaUrls(params);
         const forceDocument =
           readBooleanParam(params, "forceDocument") === true ||
           readBooleanParam(params, "asDocument") === true;
         const asVoice = readBooleanParam(params, "asVoice") === true;
+        const silent = readBooleanParam(params, "silent") === true;
         const replyToId = readStringParam(params, "replyTo");
+        const commonPayload = {
+          ...(asVoice ? { asVoice: true } : {}),
+          ...(forceDocument ? { forceDocument: true } : {}),
+          ...(silent ? { silent: true } : {}),
+        };
         logRuntimeEvent("info", "handleAction send resolved", {
           accountId: resolvePluginAccountId(cfg, accountId),
           target: summarizeResolvedTarget(target),
@@ -1006,18 +1024,18 @@ export const relayChannelOpenclawPlugin = {
         const result = await runtime.sendAction({
           kind: "message.send",
           target,
-          payload: {
-            ...(text ? { text } : {}),
-            ...(mediaUrl ? { mediaUrl } : {}),
-            ...(asVoice ? { asVoice: true } : {}),
-            ...(forceDocument ? { forceDocument: true } : {}),
-          },
+          payload: buildRelayMessagePayload({
+            text,
+            mediaUrls,
+            commonPayload,
+          }) as any,
           replyToTransportMessageId: replyToId ?? null,
           explicitThreadId,
         });
         return jsonResult({
           ok: true,
           messageId: result.transportMessageId ?? "",
+          ...(Array.isArray(result.transportMessageIds) ? { messageIds: result.transportMessageIds } : {}),
           conversationId: result.conversationId,
         });
       }
@@ -1061,7 +1079,7 @@ export const relayChannelOpenclawPlugin = {
         afterSendSuccess: true,
         afterCommit: true,
       },
-      reconcileUnknownSend(ctx) {
+      async reconcileUnknownSend(ctx) {
         pruneSendLifecycleRecords();
         const signature = buildSendSignature(ctx);
         const matched = Array.from(sendLifecycleRecords.values())
@@ -1074,6 +1092,48 @@ export const relayChannelOpenclawPlugin = {
         }
         if (!ctx.platformSendStartedAt) {
           return { status: "not_sent" };
+        }
+        const cfg = isRecord(ctx.cfg) ? (ctx.cfg as OpenClawConfig) : undefined;
+        if (cfg) {
+          try {
+            const runtime = await ensureRuntimeStarted(
+              cfg,
+              typeof ctx.accountId === "string" ? ctx.accountId : undefined
+            );
+            const idempotencyKey =
+              typeof ctx.idempotencyKey === "string" && ctx.idempotencyKey.trim()
+                ? ctx.idempotencyKey
+                : typeof ctx.attemptToken === "string" && ctx.attemptToken.trim()
+                  ? ctx.attemptToken
+                  : buildStableSendIdempotencyKey(ctx);
+            const reconciled = await runtime.reconcileAction({
+              provider: "telegram",
+              idempotencyKey,
+            });
+            if (reconciled.status === "sent") {
+              const payload = isRecord(ctx.payload) ? ctx.payload : {};
+              const result = buildMessageReceiptResult(reconciled.receipt, {
+                kind:
+                  Array.isArray(payload.mediaUrls) || typeof payload.mediaUrl === "string"
+                    ? "media"
+                    : "text",
+                fallbackMessageId: "relay-message",
+                replyToId: typeof ctx.replyToId === "string" ? ctx.replyToId : null,
+                threadId:
+                  typeof ctx.threadId === "string" || typeof ctx.threadId === "number"
+                    ? ctx.threadId
+                    : null,
+              });
+              return { status: "sent", receipt: result.receipt, messageId: result.messageId };
+            }
+            return reconciled;
+          } catch (error) {
+            return {
+              status: "unresolved",
+              retryable: true,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
         }
         return {
           status: "unresolved",
@@ -1097,7 +1157,7 @@ export const relayChannelOpenclawPlugin = {
       supportedAckPolicies: ["manual"],
     },
     send: {
-      text: async ({ cfg, to, text, accountId, replyToId, threadId, silent }) =>
+      text: async ({ cfg, to, text, accountId, replyToId, threadId, silent, idempotencyKey, attemptToken }: any) =>
         await sendRelayMessageThroughSdkAdapter({
           cfg,
           accountId,
@@ -1106,8 +1166,9 @@ export const relayChannelOpenclawPlugin = {
           replyToId,
           threadId,
           silent,
+          idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : typeof attemptToken === "string" ? attemptToken : undefined,
         }),
-      media: async ({ cfg, to, text, mediaUrl, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent }) =>
+      media: async ({ cfg, to, text, mediaUrl, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent, idempotencyKey, attemptToken }: any) =>
         await sendRelayMessageThroughSdkAdapter({
           cfg,
           accountId,
@@ -1119,25 +1180,30 @@ export const relayChannelOpenclawPlugin = {
           audioAsVoice,
           forceDocument,
           silent,
+          idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : typeof attemptToken === "string" ? attemptToken : undefined,
         }),
-      payload: async ({ cfg, to, text, mediaUrl, payload, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent }) =>
+      payload: async ({ cfg, to, text, mediaUrl, payload, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent, idempotencyKey, attemptToken }: any) =>
         await sendRelayMessageThroughSdkAdapter({
           cfg,
           accountId,
           to,
           text: typeof payload.text === "string" ? payload.text : text,
-          mediaUrl: firstPayloadMediaUrl(payload, mediaUrl),
+          mediaUrl,
           payload,
           replyToId,
           threadId,
           audioAsVoice: audioAsVoice ?? payload.audioAsVoice === true,
           forceDocument,
           silent,
+          idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : typeof attemptToken === "string" ? attemptToken : undefined,
         }),
       lifecycle: {
         beforeSendAttempt(ctx: Record<string, unknown>) {
           pruneSendLifecycleRecords();
-          const token = randomUUID();
+          const token =
+            typeof ctx.idempotencyKey === "string" && ctx.idempotencyKey.trim()
+              ? ctx.idempotencyKey
+              : buildStableSendIdempotencyKey(ctx);
           sendLifecycleRecords.set(token, {
             signature: buildSendSignature(ctx),
             status: "started",
@@ -1201,17 +1267,11 @@ export const relayChannelOpenclawPlugin = {
     deliveryMode: "direct" as const,
     sendPayload: async (input: any) => {
       const { cfg, to, payload, accountId, replyToId, threadId, forceDocument } = input;
-      const runtime = await ensureRuntimeStarted(cfg, accountId);
-      const { target, explicitThreadId } = resolveOutboundTarget(
-        to,
-        threadId ?? null,
-        inferImplicitTargetChannel(runtime.getCapabilitySnapshot(), inferTargetChatType(to))
-      );
       const text = typeof payload?.text === "string" ? payload.text : "";
       logRuntimeEvent("info", "sendPayload resolved", {
         accountId: resolvePluginAccountId(cfg, accountId),
-        target: summarizeResolvedTarget(target),
-        explicitThreadId: explicitThreadId ?? null,
+        target: to,
+        explicitThreadId: threadId ?? null,
         replyToId: replyToId ?? null,
         forceDocument: forceDocument === true,
         payload: summarizeOutboundPayload({
@@ -1219,21 +1279,23 @@ export const relayChannelOpenclawPlugin = {
           text,
         }),
       });
-      const result = await runtime.sendAction({
-        kind: "message.send",
-        target,
-        payload: {
-          ...(text ? { text } : {}),
-          ...(typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0
-            ? { mediaUrl: payload.mediaUrl }
-            : {}),
-          ...(payload?.audioAsVoice === true ? { asVoice: true } : {}),
-          ...(forceDocument === true ? { forceDocument: true } : {}),
-        },
-        replyToTransportMessageId: replyToId ?? null,
-        explicitThreadId,
+      const result = await sendRelayMessageThroughSdkAdapter({
+        cfg,
+        accountId,
+        to,
+        text,
+        payload,
+        replyToId,
+        threadId,
+        audioAsVoice: payload?.audioAsVoice === true,
+        forceDocument: forceDocument === true || payload?.forceDocument === true,
+        silent: payload?.silent === true,
       });
-      return buildOpenClawOutboundResult(result, "relay-message");
+      return {
+        channel: CHANNEL_ID,
+        messageId: result.messageId,
+        meta: result,
+      };
     },
     sendText: async ({ cfg, to, text, accountId, replyToId, threadId }) => {
       const runtime = await ensureRuntimeStarted(cfg, accountId);

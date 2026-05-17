@@ -250,7 +250,8 @@ Required OpenClaw-facing surfaces:
   target resolution
 - `threading`: reply mode, auto-thread selection, and transport reply behavior
 - `actions.describeMessageTool(...)`: advertise shared `message` tool actions
-  from negotiated capabilities
+  from negotiated capabilities, including explicit schemas for single media,
+  `mediaUrls`, and `attachments[]`
 - `outbound`: translate OpenClaw sends, typing, and file-download requests into
   relay actions
 - `directory` and target resolution helpers: user-facing lookup, explicit
@@ -316,6 +317,15 @@ capabilities. `slack.blocks` remains an example of a provider extension.
 - capability changes after reconnect or config reload must trigger an updated
   account status snapshot
 - the relay must not advertise unsupported features
+
+### Multi-File Sends
+
+The `message` tool `send` action accepts both single-file aliases
+(`media`, `mediaUrl`, `path`, `filePath`, `fileUrl`) and batch inputs
+(`mediaUrls` or `attachments[]`). The plugin normalizes these into one relay
+`message.send` action. A single file is forwarded as `payload.mediaUrl`; two or
+more files are forwarded as `payload.mediaUrls` so the relay can convert them
+into a backend `mediaGroup` and preserve all returned platform message ids.
 
 Capability negotiation lets a non-Telegram relay support a smaller subset while
 still fitting the same plugin architecture.

@@ -17,7 +17,8 @@ focused contract tests.
 - canonical target resolution, session routing, outbound route building, and
   stateless handle-based routing helpers
 - SDK-native outbound text/media/payload send with real `MessageReceipt`
-  results, plus compatibility typing and file-download request actions
+  results, multi-file `mediaUrls`/`attachments` delivery, plus compatibility
+  typing and file-download request actions
 - shared `message` tool sends are prepared for OpenClaw core delivery through
   the Channel Message SDK adapter instead of the old action handler path
 - transport-level event decoding for delivery receipts and typing updates

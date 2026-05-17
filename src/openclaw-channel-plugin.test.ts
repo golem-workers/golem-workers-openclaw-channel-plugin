@@ -522,12 +522,32 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     ).toBe(payload);
   });
 
+  it("describes message tool multi-file schema and capabilities", () => {
+    const description = relayChannelOpenclawPlugin.actions!.describeMessageTool!({
+      cfg: {
+        channels: {
+          "relay-channel": {
+            enabled: true,
+            accounts: [{ id: "schema", url: "http://127.0.0.1:43129" }],
+          },
+        },
+      } as never,
+      accountId: "schema",
+    });
+
+    expect(description).toMatchObject({
+      actions: ["send"],
+      capabilities: expect.arrayContaining(["media", "attachments", "multiMedia", "forceDocument"]),
+    });
+    expect(JSON.stringify(description)).toContain("mediaUrls");
+    expect(JSON.stringify(description)).toContain("attachments");
+  });
+
   it("sends multiple SDK media payloads and returns multi-part receipts", async () => {
     const seenActions: Array<{ payload: Record<string, unknown> }> = [];
     const relay = await startMockRelay({
       onAction(frame) {
         seenActions.push({ payload: frame.action.payload });
-        const messageId = `msg-sdk-media-${seenActions.length}`;
         return {
           type: "event",
           eventType: "transport.action.completed",
@@ -535,7 +555,8 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
             requestId: frame.requestId,
             actionId: frame.action.actionId,
             result: {
-              transportMessageId: messageId,
+              transportMessageId: "msg-sdk-media-2",
+              transportMessageIds: ["msg-sdk-media-1", "msg-sdk-media-2"],
               conversationId: "telegram:123",
             },
           },
@@ -572,17 +593,13 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       accountId: "sdk-media",
     });
 
-    expect(seenActions).toHaveLength(2);
+    expect(seenActions).toHaveLength(1);
     expect(seenActions[0]?.payload).toMatchObject({
       text: "Attached: a.txt b.txt",
-      mediaUrl: "/tmp/a.txt",
+      mediaUrls: ["/tmp/a.txt", "/tmp/b.txt"],
       silent: true,
       nativeQuote: { replyToTransportMessageId: "44" },
       channelData: { telegram: { parseMode: "Markdown" } },
-    });
-    expect(seenActions[1]?.payload).toMatchObject({
-      mediaUrl: "/tmp/b.txt",
-      silent: true,
     });
     expect(result).toMatchObject({
       messageId: "msg-sdk-media-1",
@@ -601,6 +618,89 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       cfg: runtimeCfg as never,
       accountId: "sdk-media",
       account: { accountId: "sdk-media" } as never,
+    } as never);
+  });
+
+  it("normalizes message tool attachments into one relay mediaUrls action", async () => {
+    const seenActions: Array<{ payload: Record<string, unknown> }> = [];
+    const relay = await startMockRelay({
+      onAction(frame) {
+        seenActions.push({ payload: frame.action.payload });
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "msg-tool-media-3",
+              transportMessageIds: ["msg-tool-media-1", "msg-tool-media-2", "msg-tool-media-3"],
+              conversationId: "telegram:123",
+            },
+          },
+        };
+      },
+    });
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          accounts: [{ id: "tool-media", url: `http://127.0.0.1:${relay.port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "tool-media",
+      account: { accountId: "tool-media" } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, "tool-media");
+
+    const result = await relayChannelOpenclawPlugin.actions!.handleAction!({
+      action: "send",
+      params: {
+        target: "telegram:123",
+        message: "files",
+        attachments: [
+          { filePath: "/tmp/a.md" },
+          { path: "/tmp/b.md" },
+        ],
+        mediaUrls: ["/tmp/c.md"],
+        forceDocument: true,
+      },
+      cfg: runtimeCfg as never,
+      accountId: "tool-media",
+    });
+
+    expect(seenActions).toHaveLength(1);
+    expect(seenActions[0]?.payload).toMatchObject({
+      text: "files",
+      mediaUrls: ["/tmp/c.md", "/tmp/a.md", "/tmp/b.md"],
+      forceDocument: true,
+    });
+    expect(result).toMatchObject({
+      details: {
+        ok: true,
+        messageId: "msg-tool-media-3",
+        messageIds: ["msg-tool-media-1", "msg-tool-media-2", "msg-tool-media-3"],
+      },
+    });
+    expect(JSON.stringify(result)).toContain("msg-tool-media-3");
+    expect((result as { details?: unknown }).details).toMatchObject({
+      ok: true,
+      messageId: "msg-tool-media-3",
+      messageIds: ["msg-tool-media-1", "msg-tool-media-2", "msg-tool-media-3"],
+    });
+
+    controller.abort();
+    await startTask;
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "tool-media",
+      account: { accountId: "tool-media" } as never,
     } as never);
   });
 
