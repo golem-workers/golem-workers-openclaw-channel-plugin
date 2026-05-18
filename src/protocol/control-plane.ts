@@ -113,6 +113,8 @@ export const transportActionSchema = z.object({
   openclawContext: z.object({
     sessionKey: z.string().optional(),
     runId: z.string().optional(),
+    backendMessageId: z.string().optional(),
+    correlationMessageId: z.string().optional(),
   }).optional(),
 });
 

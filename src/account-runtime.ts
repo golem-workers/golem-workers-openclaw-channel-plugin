@@ -178,6 +178,12 @@ export class RelayAccountRuntime {
     replyToTransportMessageId?: string | null;
     sessionKey?: string;
     idempotencyKey?: string;
+    openclawContext?: {
+      backendMessageId?: string;
+      correlationMessageId?: string;
+      runId?: string;
+      sessionKey?: string;
+    };
     explicitThreadId?: string | null;
   }) {
     if (!this.client) {
@@ -211,7 +217,13 @@ export class RelayAccountRuntime {
         replyToTransportMessageId: input.replyToTransportMessageId ?? null,
       },
       payload: input.payload,
-      openclawContext: input.sessionKey ? { sessionKey: input.sessionKey } : undefined,
+      openclawContext:
+        input.openclawContext || input.sessionKey
+          ? {
+              ...input.openclawContext,
+              ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
+            }
+          : undefined,
     };
     return await this.client.dispatchAction(action);
   }

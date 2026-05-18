@@ -1003,6 +1003,11 @@ export const relayChannelOpenclawPlugin = {
           rawTargetForScope ? inferTargetChatType(rawTargetForScope) : undefined
         ),
       });
+      const sessionRoute = resolveOutboundSessionRoute({
+        resolvedTarget: target,
+        replyToTransportMessageId: readStringParam(params, "replyTo") ?? null,
+        explicitThreadId,
+      });
       logRuntimeEvent("info", "handleAction dispatch", {
         accountId: resolvePluginAccountId(cfg, accountId),
         action: requestedAction,
@@ -1039,6 +1044,23 @@ export const relayChannelOpenclawPlugin = {
             text,
           }),
         });
+        const idempotencyKey =
+          readStringParam(params, "idempotencyKey") ??
+          readStringParam(params, "attemptToken") ??
+          buildStableSendIdempotencyKey({
+            channel: CHANNEL_ID,
+            to: target.to,
+            accountId: accountId ?? null,
+            threadId: explicitThreadId ?? null,
+            replyToId: replyToId ?? null,
+            text,
+            payload: buildRelayMessagePayload({
+              text,
+              mediaUrls,
+              commonPayload,
+            }),
+            silent,
+          });
         const result = await runtime.sendAction({
           kind: "message.send",
           target,
@@ -1049,6 +1071,8 @@ export const relayChannelOpenclawPlugin = {
           }) as any,
           replyToTransportMessageId: replyToId ?? null,
           explicitThreadId,
+          sessionKey: sessionRoute.conversationId,
+          idempotencyKey,
         });
         return jsonResult({
           ok: true,
@@ -1069,6 +1093,7 @@ export const relayChannelOpenclawPlugin = {
             ...(readStringParam(params, "chatAction") ? { chatAction: readStringParam(params, "chatAction") } : {}),
           },
           explicitThreadId,
+          sessionKey: sessionRoute.conversationId,
         });
         return jsonResult({
           ok: true,

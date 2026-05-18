@@ -109,6 +109,8 @@ export type RelayActionPayload = {
   openclawContext?: {
     sessionKey?: string;
     runId?: string;
+    backendMessageId?: string;
+    correlationMessageId?: string;
   };
 };
 

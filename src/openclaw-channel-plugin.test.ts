@@ -42,8 +42,10 @@ async function startMockRelay(options?: {
     requestId: string;
     action: {
       actionId: string;
+      idempotencyKey?: string;
       kind: string;
       payload: Record<string, unknown>;
+      openclawContext?: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     };
   }) => Record<string, unknown>;
@@ -61,8 +63,10 @@ async function startMockRelay(options?: {
       requestId?: string;
       action?: {
         actionId?: string;
+        idempotencyKey?: string;
         kind?: string;
         payload?: Record<string, unknown>;
+        openclawContext?: Record<string, unknown>;
         transportTarget?: { channel?: string; chatId?: string };
       };
     };
@@ -309,6 +313,8 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     const seenActions: Array<{
       kind: string;
       payload: Record<string, unknown>;
+      idempotencyKey?: string;
+      openclawContext?: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
     }> = [];
     const relay = await startMockRelay({
@@ -316,6 +322,8 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
         seenActions.push({
           kind: frame.action.kind,
           payload: frame.action.payload,
+          idempotencyKey: frame.action.idempotencyKey,
+          openclawContext: frame.action.openclawContext,
           transportTarget: frame.action.transportTarget,
         });
         return {
@@ -378,6 +386,8 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
         chatId: "123",
       },
     });
+    expect(seenActions[0]?.idempotencyKey).toMatch(/^relay-channel:/);
+    expect(seenActions[0]?.openclawContext).toEqual({ sessionKey: "123" });
 
     controller.abort();
     await startTask;
