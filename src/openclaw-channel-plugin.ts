@@ -1003,9 +1003,14 @@ export const relayChannelOpenclawPlugin = {
           rawTargetForScope ? inferTargetChatType(rawTargetForScope) : undefined
         ),
       });
+      const rawReplyToId = readStringParam(params, "replyTo");
+      const replyToTransportMessageId = sanitizeReplyToTransportMessageId({
+        channel: target.transportTarget.channel,
+        replyToId: rawReplyToId ?? null,
+      });
       const sessionRoute = resolveOutboundSessionRoute({
         resolvedTarget: target,
-        replyToTransportMessageId: readStringParam(params, "replyTo") ?? null,
+        replyToTransportMessageId,
         explicitThreadId,
       });
       logRuntimeEvent("info", "handleAction dispatch", {
@@ -1027,7 +1032,7 @@ export const relayChannelOpenclawPlugin = {
           readBooleanParam(params, "asDocument") === true;
         const asVoice = readBooleanParam(params, "asVoice") === true;
         const silent = readBooleanParam(params, "silent") === true;
-        const replyToId = readStringParam(params, "replyTo");
+        const replyToId = replyToTransportMessageId;
         const commonPayload = {
           ...(asVoice ? { asVoice: true } : {}),
           ...(forceDocument ? { forceDocument: true } : {}),

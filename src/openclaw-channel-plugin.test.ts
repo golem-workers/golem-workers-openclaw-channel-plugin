@@ -316,15 +316,20 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       idempotencyKey?: string;
       openclawContext?: Record<string, unknown>;
       transportTarget?: { channel?: string; chatId?: string };
+      replyToTransportMessageId?: string | null;
     }> = [];
     const relay = await startMockRelay({
       onAction(frame) {
+        const action = frame.action as typeof frame.action & {
+          reply?: { replyToTransportMessageId?: string | null };
+        };
         seenActions.push({
-          kind: frame.action.kind,
-          payload: frame.action.payload,
-          idempotencyKey: frame.action.idempotencyKey,
-          openclawContext: frame.action.openclawContext,
-          transportTarget: frame.action.transportTarget,
+          kind: action.kind,
+          payload: action.payload,
+          idempotencyKey: action.idempotencyKey,
+          openclawContext: action.openclawContext,
+          transportTarget: action.transportTarget,
+          replyToTransportMessageId: action.reply?.replyToTransportMessageId,
         });
         return {
           type: "event",
@@ -388,6 +393,20 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     });
     expect(seenActions[0]?.idempotencyKey).toMatch(/^relay-channel:/);
     expect(seenActions[0]?.openclawContext).toEqual({ sessionKey: "123" });
+
+    await relayChannelOpenclawPlugin.actions!.handleAction!({
+      action: "send",
+      params: {
+        target: "telegram:123",
+        message: "Plain relay message without valid reply id",
+        replyTo: "backend-message-id",
+      },
+      cfg: runtimeCfg as never,
+      accountId: "send-action",
+      toolContext: {},
+    } as never);
+
+    expect(seenActions[1]?.replyToTransportMessageId).toBeFalsy();
 
     controller.abort();
     await startTask;
