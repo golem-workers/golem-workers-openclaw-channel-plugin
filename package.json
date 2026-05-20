@@ -1,17 +1,44 @@
 {
-  "name": "golem-workers-openclaw-channel-plugin",
-  "version": "1.0.44",
-  "private": true,
+  "name": "@golemworkers/relay-channel",
+  "version": "1.0.45-publish-test",
+  "description": "Golem Workers relay-backed OpenClaw channel plugin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/golem-workers/golem-workers-openclaw-channel-plugin.git"
+  },
   "type": "module",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "openclaw": {
     "extensions": [
       "./dist/index.js"
     ],
     "setupEntry": "./dist/setup-entry.js",
+    "install": {
+      "npmSpec": "@golemworkers/relay-channel",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.5.12"
+    },
+    "compat": {
+      "pluginApi": ">=1.0.0"
+    },
+    "build": {
+      "openclawVersion": "2026.5.18"
+    },
     "channel": {
       "id": "relay-channel",
       "label": "Relay Channel",
-      "blurb": "Relay-backed OpenClaw channel plugin."
+      "selectionLabel": "Relay Channel (Golem Workers)",
+      "blurb": "Relay-backed OpenClaw channel plugin for Golem Workers agents."
+    },
+    "release": {
+      "publishToNpm": true
     }
   },
   "engines": {
@@ -23,6 +50,8 @@
     "deploy:agent": "node ./scripts/deploy-agent-bundle.mjs",
     "smoke:agent": "node ./scripts/smoke-cycle-via-admin.mjs",
     "smoke:agent:mock": "node ./scripts/smoke-cycle-via-admin.mjs --mock-relay",
+    "validate:npm-publish": "node ./scripts/validate-npm-publish.mjs",
+    "publish:npm-release": "node ./scripts/publish-npm-release.mjs",
     "lint": "eslint .",
     "test": "vitest run"
   },

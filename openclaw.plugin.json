@@ -5,6 +5,44 @@
   "entry": "./dist/index.js",
   "setupEntry": "./dist/setup-entry.js",
   "description": "Relay-backed OpenClaw channel plugin.",
+  "channelConfigs": {
+    "relay-channel": {
+      "label": "Relay Channel",
+      "description": "Golem Workers relay-backed channel plugin.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

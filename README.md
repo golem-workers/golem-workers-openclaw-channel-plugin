@@ -129,6 +129,36 @@ Default output path:
 .artifacts/relay-channel/relay-channel-bundle.tgz
 ```
 
+### npm publish (phase 1)
+
+The package is published as `@golemworkers/relay-channel`. Agent install still
+uses the legacy bundle flow until phase 2; release automation can publish to
+npm ahead of that switch.
+
+Local validation:
+
+```bash
+npm run build
+npm run validate:npm-publish
+```
+
+Dry-run publish:
+
+```bash
+npm run publish:npm-release -- --version 1.0.45 --dry-run
+```
+
+Real publish (requires `npm whoami` or `NPM_TOKEN`):
+
+```bash
+npm run publish:npm-release -- --version 1.0.45 --publish
+```
+
+`release-all.sh` prepares bundle artifacts for every plugin release. When the
+plugin repo has release changes it also publishes to npm by default; use
+`DRY_RUN=1` for `npm publish --dry-run` or `PUBLISH_RELAY_CHANNEL_PLUGIN_NPM=0`
+to skip npm publish.
+
 ### Upload and install on a remote agent
 
 The deploy script:
