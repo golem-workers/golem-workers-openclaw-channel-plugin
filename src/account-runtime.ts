@@ -183,6 +183,7 @@ export class RelayAccountRuntime {
       correlationMessageId?: string;
       runId?: string;
       sessionKey?: string;
+      deliveryKind?: "tool" | "block" | "final";
     };
     explicitThreadId?: string | null;
   }) {

@@ -392,7 +392,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       },
     });
     expect(seenActions[0]?.idempotencyKey).toMatch(/^relay-channel:/);
-    expect(seenActions[0]?.openclawContext).toEqual({ sessionKey: "123" });
+    expect(seenActions[0]?.openclawContext).toEqual({ sessionKey: "123", deliveryKind: "final" });
 
     await relayChannelOpenclawPlugin.actions!.handleAction!({
       action: "send",

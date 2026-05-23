@@ -25,6 +25,7 @@ import {
   resolveTarget,
 } from "./target-resolution.js";
 import type { RelayCapabilitySnapshot } from "../api.js";
+import { inferRelayDeliveryKind, type RelayDeliveryKindSource } from "./delivery-kind.js";
 
 const CHANNEL_ID = "relay-channel";
 
@@ -533,6 +534,31 @@ function buildMessageReceiptResult(
   };
 }
 
+function buildRelayOpenclawContext(input: {
+  deliveryKindSource: RelayDeliveryKindSource;
+  text?: string | null;
+  payload?: Record<string, unknown> | null;
+  openclawContext?: {
+    backendMessageId?: string;
+    correlationMessageId?: string;
+    runId?: string;
+    sessionKey?: string;
+    deliveryKind?: "tool" | "block" | "final";
+  };
+}) {
+  const deliveryKind =
+    input.openclawContext?.deliveryKind ??
+    inferRelayDeliveryKind({
+      source: input.deliveryKindSource,
+      text: input.text,
+      payload: input.payload,
+    });
+  return {
+    ...input.openclawContext,
+    deliveryKind,
+  };
+}
+
 async function sendRelayMessageThroughSdkAdapter(input: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -546,6 +572,14 @@ async function sendRelayMessageThroughSdkAdapter(input: {
   silent?: boolean;
   idempotencyKey?: string | null;
   payload?: Record<string, unknown>;
+  deliveryKindSource: RelayDeliveryKindSource;
+  openclawContext?: {
+    backendMessageId?: string;
+    correlationMessageId?: string;
+    runId?: string;
+    sessionKey?: string;
+    deliveryKind?: "tool" | "block" | "final";
+  };
 }) {
   const runtime = await ensureRuntimeStarted(input.cfg, input.accountId);
   const { target, explicitThreadId } = resolveOutboundTarget(
@@ -575,6 +609,12 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     ...(normalizedPayload.channelData ? { channelData: normalizedPayload.channelData } : {}),
   };
   const mediaUrls = normalizedPayload.mediaUrls;
+  const openclawContext = buildRelayOpenclawContext({
+    deliveryKindSource: input.deliveryKindSource,
+    text: normalizedPayload.text,
+    payload: input.payload ?? null,
+    openclawContext: input.openclawContext,
+  });
   const idempotencyKey = input.idempotencyKey ?? buildStableSendIdempotencyKey({
     channel: CHANNEL_ID,
     to: input.to,
@@ -602,6 +642,7 @@ async function sendRelayMessageThroughSdkAdapter(input: {
       replyToTransportMessageId,
       explicitThreadId,
       idempotencyKey,
+      openclawContext,
     });
     return buildMessageReceiptResult(result, {
       kind: normalizedPayload.audioAsVoice ? "voice" : "media",
@@ -621,6 +662,7 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     replyToTransportMessageId,
     explicitThreadId,
     idempotencyKey,
+    openclawContext,
   });
   return buildMessageReceiptResult(result, {
     kind: "text",
@@ -1078,6 +1120,11 @@ export const relayChannelOpenclawPlugin = {
           explicitThreadId,
           sessionKey: sessionRoute.conversationId,
           idempotencyKey,
+          openclawContext: buildRelayOpenclawContext({
+            deliveryKindSource: "message-adapter",
+            text,
+            openclawContext: { sessionKey: sessionRoute.conversationId },
+          }),
         });
         return jsonResult({
           ok: true,
@@ -1215,6 +1262,7 @@ export const relayChannelOpenclawPlugin = {
           threadId,
           silent,
           idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : typeof attemptToken === "string" ? attemptToken : undefined,
+          deliveryKindSource: "message-adapter",
         }),
       media: async ({ cfg, to, text, mediaUrl, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent, idempotencyKey, attemptToken }: any) =>
         await sendRelayMessageThroughSdkAdapter({
@@ -1229,6 +1277,7 @@ export const relayChannelOpenclawPlugin = {
           forceDocument,
           silent,
           idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : typeof attemptToken === "string" ? attemptToken : undefined,
+          deliveryKindSource: "message-adapter",
         }),
       payload: async ({ cfg, to, text, mediaUrl, payload, accountId, replyToId, threadId, audioAsVoice, forceDocument, silent, idempotencyKey, attemptToken }: any) =>
         await sendRelayMessageThroughSdkAdapter({
@@ -1244,6 +1293,7 @@ export const relayChannelOpenclawPlugin = {
           forceDocument,
           silent,
           idempotencyKey: typeof idempotencyKey === "string" ? idempotencyKey : typeof attemptToken === "string" ? attemptToken : undefined,
+          deliveryKindSource: "message-adapter",
         }),
       lifecycle: {
         beforeSendAttempt(ctx: Record<string, unknown>) {
@@ -1339,6 +1389,7 @@ export const relayChannelOpenclawPlugin = {
         audioAsVoice: payload?.audioAsVoice === true,
         forceDocument: forceDocument === true || payload?.forceDocument === true,
         silent: payload?.silent === true,
+        deliveryKindSource: "outbound",
       });
       return {
         channel: CHANNEL_ID,
@@ -1359,6 +1410,10 @@ export const relayChannelOpenclawPlugin = {
         payload: { text },
         replyToTransportMessageId: replyToId ?? null,
         explicitThreadId,
+        openclawContext: buildRelayOpenclawContext({
+          deliveryKindSource: "outbound",
+          text,
+        }),
       });
       return buildOpenClawOutboundResult(result, "relay-message");
     },
@@ -1374,17 +1429,23 @@ export const relayChannelOpenclawPlugin = {
       if (typeof mediaUrl !== "string" || mediaUrl.trim().length === 0) {
         throw new Error("MEDIA_URL_REQUIRED: relay-channel sendMedia requires mediaUrl");
       }
+      const payload = {
+        ...(text ? { text } : {}),
+        mediaUrl,
+        ...(asVoice === true ? { asVoice: true } : {}),
+        ...(forceDocument === true ? { forceDocument: true } : {}),
+      };
       const result = await runtime.sendAction({
         kind: "message.send",
         target,
-        payload: {
-          ...(text ? { text } : {}),
-          mediaUrl,
-          ...(asVoice === true ? { asVoice: true } : {}),
-          ...(forceDocument === true ? { forceDocument: true } : {}),
-        },
+        payload,
         replyToTransportMessageId: replyToId ?? null,
         explicitThreadId,
+        openclawContext: buildRelayOpenclawContext({
+          deliveryKindSource: "outbound",
+          text,
+          payload,
+        }),
       });
       return buildOpenClawOutboundResult(result, "relay-message");
     },

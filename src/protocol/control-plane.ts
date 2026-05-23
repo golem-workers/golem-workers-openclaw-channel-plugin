@@ -115,6 +115,7 @@ export const transportActionSchema = z.object({
     runId: z.string().optional(),
     backendMessageId: z.string().optional(),
     correlationMessageId: z.string().optional(),
+    deliveryKind: z.enum(["tool", "block", "final"]).optional(),
   }).optional(),
 });
 
