@@ -163,6 +163,12 @@ export type RelayChannelPluginConfig = {
   directory?: {
     enabled?: boolean;
   };
+  nudge?: {
+    enabled?: boolean;
+    analyzedRecentMessageCount?: number;
+    baseTimeoutMs?: number;
+    model?: string | null;
+  };
   accounts: Array<{
     id: string;
     url?: string;
