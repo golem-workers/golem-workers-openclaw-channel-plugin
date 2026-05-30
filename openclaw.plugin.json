@@ -38,6 +38,29 @@
                 }
               }
             }
+          },
+          "nudge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "analyzedRecentMessageCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 50
+              },
+              "baseTimeoutMs": {
+                "type": "integer",
+                "minimum": 30000,
+                "maximum": 86400000
+              },
+              "model": {
+                "type": ["string", "null"],
+                "minLength": 1
+              }
+            }
           }
         }
       }
@@ -149,6 +172,29 @@
               "type": "object",
               "additionalProperties": true
             }
+          }
+        }
+      },
+      "nudge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "analyzedRecentMessageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50
+          },
+          "baseTimeoutMs": {
+            "type": "integer",
+            "minimum": 30000,
+            "maximum": 86400000
+          },
+          "model": {
+            "type": ["string", "null"],
+            "minLength": 1
           }
         }
       }
