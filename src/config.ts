@@ -8,18 +8,6 @@ const accountSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-const nudgeSchema = z.object({
-  enabled: z.boolean().optional().default(false),
-  analyzedRecentMessageCount: z.number().int().min(0).max(50).optional().default(0),
-  baseTimeoutMs: z.number().int().min(30_000).max(86_400_000).optional().default(300_000),
-  model: z.string().trim().min(1).nullable().optional().default(null),
-}).optional().default({
-  enabled: false,
-  analyzedRecentMessageCount: 0,
-  baseTimeoutMs: 300_000,
-  model: null,
-});
-
 export const relayChannelPluginConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
   url: z.string().url().optional(),
@@ -42,7 +30,6 @@ export const relayChannelPluginConfigSchema = z.object({
   directory: z.object({
     enabled: z.boolean().optional().default(true),
   }).optional().default({ enabled: true }),
-  nudge: nudgeSchema,
   // Allow install-time empty config so OpenClaw can track the plugin first and
   // provisioning can inject account wiring in a second step.
   accounts: z.array(accountSchema).optional().default([]),

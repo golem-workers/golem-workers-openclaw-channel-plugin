@@ -1,7 +1,9 @@
 {
   "id": "relay-channel",
   "kind": "channel",
-  "channels": ["relay-channel"],
+  "channels": [
+    "relay-channel"
+  ],
   "entry": "./dist/index.js",
   "setupEntry": "./dist/setup-entry.js",
   "description": "Relay-backed OpenClaw channel plugin.",
@@ -18,7 +20,9 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["id"],
+              "required": [
+                "id"
+              ],
               "properties": {
                 "id": {
                   "type": "string",
@@ -36,29 +40,6 @@
                   "type": "object",
                   "additionalProperties": true
                 }
-              }
-            }
-          },
-          "nudge": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "enabled": {
-                "type": "boolean"
-              },
-              "analyzedRecentMessageCount": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 50
-              },
-              "baseTimeoutMs": {
-                "type": "integer",
-                "minimum": 30000,
-                "maximum": 86400000
-              },
-              "model": {
-                "type": ["string", "null"],
-                "minLength": 1
               }
             }
           }
@@ -117,7 +98,10 @@
         "properties": {
           "mode": {
             "type": "string",
-            "enum": ["allow_all", "allow_list"]
+            "enum": [
+              "allow_all",
+              "allow_list"
+            ]
           },
           "allowedTargets": {
             "type": "array",
@@ -133,7 +117,10 @@
         "properties": {
           "mode": {
             "type": "string",
-            "enum": ["same_chat_only", "disabled"]
+            "enum": [
+              "same_chat_only",
+              "disabled"
+            ]
           },
           "approvalRequired": {
             "type": "boolean"
@@ -154,7 +141,9 @@
         "items": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id"],
+          "required": [
+            "id"
+          ],
           "properties": {
             "id": {
               "type": "string",
@@ -172,29 +161,6 @@
               "type": "object",
               "additionalProperties": true
             }
-          }
-        }
-      },
-      "nudge": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "analyzedRecentMessageCount": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 50
-          },
-          "baseTimeoutMs": {
-            "type": "integer",
-            "minimum": 30000,
-            "maximum": 86400000
-          },
-          "model": {
-            "type": ["string", "null"],
-            "minLength": 1
           }
         }
       }
