@@ -559,6 +559,33 @@ function buildRelayOpenclawContext(input: {
   };
 }
 
+function isSilentControlReplyText(text: string | null | undefined): boolean {
+  const normalized = text?.trim().toUpperCase() ?? "";
+  return normalized === "NO_REPLY" || normalized === "NO";
+}
+
+function buildSuppressedMessageResult(input: {
+  idempotencyKey: string;
+  conversationId?: string;
+  threadId?: string | number | null;
+  replyToId?: string | null;
+}) {
+  return buildMessageReceiptResult(
+    {
+      transportMessageId: `relay-message-suppressed:${input.idempotencyKey}`,
+      conversationId: input.conversationId,
+      threadId:
+        input.threadId !== undefined && input.threadId !== null ? String(input.threadId) : undefined,
+    },
+    {
+      kind: "text",
+      fallbackMessageId: "relay-message-suppressed",
+      replyToId: input.replyToId ?? null,
+      threadId: input.threadId ?? null,
+    }
+  );
+}
+
 async function sendRelayMessageThroughSdkAdapter(input: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -629,6 +656,20 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     }),
     silent: normalizedPayload.silent,
   });
+  if (mediaUrls.length === 0 && isSilentControlReplyText(normalizedPayload.text)) {
+    logRuntimeEvent("info", "Suppressing silent control reply", {
+      target: summarizeResolvedTarget(target),
+      explicitThreadId: explicitThreadId ?? null,
+      replyToId: replyToTransportMessageId,
+      idempotencyKey,
+    });
+    return buildSuppressedMessageResult({
+      idempotencyKey,
+      conversationId: target.conversationHandle ?? target.transportTarget.chatId ?? target.to,
+      threadId: explicitThreadId ?? input.threadId ?? null,
+      replyToId: replyToTransportMessageId,
+    });
+  }
   if (mediaUrls.length > 0) {
     const sentAt = Date.now();
     const result = await runtime.sendAction({
@@ -1108,6 +1149,26 @@ export const relayChannelOpenclawPlugin = {
             }),
             silent,
           });
+        if (mediaUrls.length === 0 && isSilentControlReplyText(text)) {
+          logRuntimeEvent("info", "Suppressing silent control reply", {
+            accountId: resolvePluginAccountId(cfg, accountId),
+            target: summarizeResolvedTarget(target),
+            explicitThreadId: explicitThreadId ?? null,
+            replyToId: replyToId ?? null,
+            idempotencyKey,
+          });
+          const suppressed = buildSuppressedMessageResult({
+            idempotencyKey,
+            conversationId: sessionRoute.conversationId,
+            threadId: explicitThreadId ?? null,
+            replyToId,
+          });
+          return jsonResult({
+            ok: true,
+            messageId: suppressed.messageId,
+            conversationId: sessionRoute.conversationId,
+          });
+        }
         const result = await runtime.sendAction({
           kind: "message.send",
           target,

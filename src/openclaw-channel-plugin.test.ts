@@ -417,6 +417,75 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     } as never);
   });
 
+  it("suppresses text-only NO_REPLY control sends", async () => {
+    const seenActions: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const relay = await startMockRelay({
+      onAction(frame) {
+        seenActions.push({
+          kind: frame.action.kind,
+          payload: frame.action.payload,
+        });
+        return {
+          type: "event",
+          eventType: "transport.action.completed",
+          payload: {
+            requestId: frame.requestId,
+            actionId: frame.action.actionId,
+            result: {
+              transportMessageId: "msg-should-not-send",
+              conversationId: "telegram:123",
+            },
+          },
+        };
+      },
+    });
+    const runtimeCfg = {
+      channels: {
+        "relay-channel": {
+          enabled: true,
+          accounts: [{ id: "suppress-no-reply", url: `http://127.0.0.1:${relay.port}` }],
+        },
+      },
+    };
+    const controller = new AbortController();
+    const startTask = relayChannelOpenclawPlugin.gateway!.startAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "suppress-no-reply",
+      account: { accountId: "suppress-no-reply" } as never,
+      abortSignal: controller.signal,
+    } as never);
+
+    await waitForHealthy(runtimeCfg, "suppress-no-reply");
+
+    const result = await relayChannelOpenclawPlugin.actions!.handleAction!({
+      action: "send",
+      params: {
+        target: "telegram:123",
+        message: " NO_REPLY ",
+      },
+      cfg: runtimeCfg as never,
+      accountId: "suppress-no-reply",
+      toolContext: {},
+    } as never);
+
+    expect(result).toMatchObject({
+      details: {
+        ok: true,
+        conversationId: "123",
+        messageId: expect.stringMatching(/^relay-message-suppressed:/),
+      },
+    });
+    expect(seenActions).toEqual([]);
+
+    controller.abort();
+    await startTask;
+    await relayChannelOpenclawPlugin.gateway!.stopAccount!({
+      cfg: runtimeCfg as never,
+      accountId: "suppress-no-reply",
+      account: { accountId: "suppress-no-reply" } as never,
+    } as never);
+  });
+
   it("sends text through the SDK message adapter and returns a receipt", async () => {
     const seenActions: Array<{
       kind: string;
