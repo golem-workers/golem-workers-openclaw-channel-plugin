@@ -1,6 +1,6 @@
 {
   "name": "@golemworkers/relay-channel",
-  "version": "1.0.84",
+  "version": "1.0.100",
   "description": "Golem Workers relay-backed OpenClaw channel plugin",
   "repository": {
     "type": "git",
