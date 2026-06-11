@@ -16,6 +16,7 @@ import { describeMessageTool } from "./message-actions.js";
 import { resolveOutboundSessionRoute } from "./outbound-session-route.js";
 import { logRuntimeEvent } from "./runtime-log.js";
 import { inspectRelaySetup } from "./setup.js";
+import { resolveSelfNudgeSettings, SelfNudgeController } from "./self-nudge.js";
 import { RelayStatusRegistry } from "./status.js";
 import {
   formatTargetDisplay as formatResolvedTargetDisplay,
@@ -781,6 +782,8 @@ function upsertAccountSection(
 
 const statusRegistry = new RelayStatusRegistry();
 const runtimes = new Map<string, RelayAccountRuntime>();
+const selfNudgeControllers = new Map<string, SelfNudgeController>();
+let openclawRuntime: Record<string, unknown> | null = null;
 const sendLifecycleRecords = new Map<
   string,
   {
@@ -834,6 +837,38 @@ function getRuntime(cfg: OpenClawConfig, accountId?: string | null) {
   );
   runtimes.set(resolvedAccountId, runtime);
   return runtime;
+}
+
+export function setRelayChannelOpenClawRuntime(runtime: unknown): void {
+  openclawRuntime =
+    typeof runtime === "object" && runtime !== null ? (runtime as Record<string, unknown>) : null;
+}
+
+function startSelfNudgeController(cfg: OpenClawConfig, accountId: string): void {
+  const settings = resolveSelfNudgeSettings(parseChannelConfig(cfg));
+  const existing = selfNudgeControllers.get(accountId);
+  existing?.stop();
+  selfNudgeControllers.delete(accountId);
+  if (!settings.enabled) return;
+  if (!openclawRuntime) {
+    logRuntimeEvent("warn", "Self-nudge enabled but OpenClaw runtime is unavailable", { accountId });
+    return;
+  }
+  const controller = new SelfNudgeController(openclawRuntime, settings);
+  controller.start();
+  selfNudgeControllers.set(accountId, controller);
+  logRuntimeEvent("info", "Self-nudge controller started", {
+    accountId,
+    analyzedRecentMessageCount: settings.analyzedRecentMessageCount,
+    baseTimeoutMs: settings.baseTimeoutMs,
+    hasModel: Boolean(settings.model),
+  });
+}
+
+function stopSelfNudgeController(accountId: string): void {
+  const existing = selfNudgeControllers.get(accountId);
+  existing?.stop();
+  selfNudgeControllers.delete(accountId);
 }
 
 async function ensureRuntimeStarted(cfg: OpenClawConfig, accountId?: string | null) {
@@ -972,11 +1007,19 @@ export const relayChannelOpenclawPlugin = {
   },
   gateway: {
     async startAccount({ cfg, accountId, account, abortSignal }) {
-      await ensureRuntimeStarted(cfg, accountId ?? account?.accountId ?? null);
-      await waitForAbort(abortSignal);
+      const resolvedAccountId = resolvePluginAccountId(cfg, accountId ?? account?.accountId ?? null);
+      await ensureRuntimeStarted(cfg, resolvedAccountId);
+      startSelfNudgeController(cfg, resolvedAccountId);
+      try {
+        await waitForAbort(abortSignal);
+      } finally {
+        stopSelfNudgeController(resolvedAccountId);
+      }
     },
     async stopAccount({ cfg, accountId, account }) {
-      const runtime = getRuntime(cfg, accountId ?? account?.accountId ?? null);
+      const resolvedAccountId = resolvePluginAccountId(cfg, accountId ?? account?.accountId ?? null);
+      stopSelfNudgeController(resolvedAccountId);
+      const runtime = getRuntime(cfg, resolvedAccountId);
       await runtime.stop();
     },
   },

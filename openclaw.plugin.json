@@ -136,6 +136,28 @@
           }
         }
       },
+      "selfNudge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "analyzedRecentMessageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20
+          },
+          "baseTimeoutMs": {
+            "type": "integer",
+            "minimum": 10000
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
       "accounts": {
         "type": "array",
         "items": {
