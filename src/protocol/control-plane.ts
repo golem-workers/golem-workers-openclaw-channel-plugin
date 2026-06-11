@@ -116,6 +116,8 @@ export const transportActionSchema = z.object({
     backendMessageId: z.string().optional(),
     correlationMessageId: z.string().optional(),
     deliveryKind: z.enum(["tool", "block", "final"]).optional(),
+    visibleText: z.string().optional(),
+    mediaSummary: z.string().optional(),
   }).optional(),
 });
 
@@ -225,6 +227,13 @@ export const transportDeliveryReceiptEventSchema = z.object({
     actionId: z.string().optional(),
     requestId: z.string().optional(),
     transportMessageId: z.string().optional(),
+    sessionKey: z.string().optional(),
+    runId: z.string().optional(),
+    backendMessageId: z.string().optional(),
+    correlationMessageId: z.string().optional(),
+    deliveryKind: z.enum(["tool", "block", "final"]).optional(),
+    visibleText: z.string().optional(),
+    mediaSummary: z.string().optional(),
     status: z.enum(["sent", "delivered", "failed"]),
     code: z.string().optional(),
     message: z.string().optional(),

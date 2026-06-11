@@ -184,6 +184,8 @@ export class RelayAccountRuntime {
       runId?: string;
       sessionKey?: string;
       deliveryKind?: "tool" | "block" | "final";
+      visibleText?: string;
+      mediaSummary?: string;
     };
     explicitThreadId?: string | null;
   }) {

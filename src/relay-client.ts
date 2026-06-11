@@ -42,6 +42,7 @@ export class RelayClient extends EventEmitter {
   private healthcheckTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private connectionHealthy = false;
+  private readonly deliveryEvidenceByKey = new Map<string, DeliveryEvidenceContext>();
 
   public constructor(private readonly options: RelayClientOptions) {
     super();
@@ -81,6 +82,7 @@ export class RelayClient extends EventEmitter {
       throw new Error("ACCOUNT_NOT_READY: account runtime has not been started");
     }
     const requestId = randomUUID();
+    this.rememberDeliveryEvidenceContext({ requestId, action });
     try {
       const response = await fetchWithTimeout(`${this.options.url}/actions`, {
         method: "POST",
@@ -150,7 +152,7 @@ export class RelayClient extends EventEmitter {
   }
 
   public ingestEvent(rawEvent: Record<string, unknown>) {
-    const event = controlPlaneEventSchema.parse(rawEvent);
+    const event = this.enrichControlPlaneEvent(controlPlaneEventSchema.parse(rawEvent));
     switch (event.eventType) {
       case "transport.message.received":
         this.emit("inboundMessage", event);
@@ -189,6 +191,46 @@ export class RelayClient extends EventEmitter {
       default:
         break;
     }
+  }
+
+  private rememberDeliveryEvidenceContext(input: { requestId: string; action: RelayActionPayload }) {
+    if (input.action.kind !== "message.send") return;
+    const context = buildDeliveryEvidenceContext(input);
+    const keys = [
+      input.requestId,
+      input.action.actionId,
+      input.action.idempotencyKey,
+    ].filter((key): key is string => typeof key === "string" && key.length > 0);
+    for (const key of keys) {
+      this.deliveryEvidenceByKey.set(key, context);
+    }
+    while (this.deliveryEvidenceByKey.size > 500) {
+      const oldestKey = this.deliveryEvidenceByKey.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      this.deliveryEvidenceByKey.delete(oldestKey);
+    }
+  }
+
+  private enrichControlPlaneEvent(event: ReturnType<typeof controlPlaneEventSchema.parse>) {
+    if (event.eventType !== "transport.delivery.receipt") return event;
+    const payload = event.payload;
+    const evidence =
+      readEvidenceContext(this.deliveryEvidenceByKey, payload.actionId) ??
+      readEvidenceContext(this.deliveryEvidenceByKey, payload.requestId);
+    if (!evidence) return event;
+    return {
+      ...event,
+      payload: {
+        ...payload,
+        sessionKey: payload.sessionKey ?? evidence.sessionKey,
+        runId: payload.runId ?? evidence.runId,
+        backendMessageId: payload.backendMessageId ?? evidence.backendMessageId,
+        correlationMessageId: payload.correlationMessageId ?? evidence.correlationMessageId,
+        deliveryKind: payload.deliveryKind ?? evidence.deliveryKind,
+        visibleText: payload.visibleText ?? evidence.visibleText,
+        mediaSummary: payload.mediaSummary ?? evidence.mediaSummary,
+      },
+    };
   }
 
   private buildConnectingStatus(details: Partial<RelayRecoveryState> = {}): RelayAccountStatus {
@@ -439,6 +481,58 @@ export class RelayClient extends EventEmitter {
       this.healthcheckTimer = null;
     }
   }
+}
+
+type DeliveryEvidenceContext = {
+  sessionKey?: string;
+  runId?: string;
+  backendMessageId?: string;
+  correlationMessageId?: string;
+  deliveryKind?: "tool" | "block" | "final";
+  visibleText?: string;
+  mediaSummary?: string;
+};
+
+function buildDeliveryEvidenceContext(input: {
+  requestId: string;
+  action: RelayActionPayload;
+}): DeliveryEvidenceContext {
+  const context = input.action.openclawContext ?? {};
+  const visibleText = context.visibleText ?? readActionVisibleText(input.action.payload);
+  const mediaSummary = context.mediaSummary ?? readActionMediaSummary(input.action.payload);
+  return {
+    ...(context.sessionKey ? { sessionKey: context.sessionKey } : {}),
+    ...(context.runId ? { runId: context.runId } : {}),
+    ...(context.backendMessageId ? { backendMessageId: context.backendMessageId } : {}),
+    ...(context.correlationMessageId ? { correlationMessageId: context.correlationMessageId } : {}),
+    ...(context.deliveryKind ? { deliveryKind: context.deliveryKind } : {}),
+    ...(visibleText ? { visibleText } : {}),
+    ...(mediaSummary ? { mediaSummary } : {}),
+  };
+}
+
+function readEvidenceContext(
+  map: Map<string, DeliveryEvidenceContext>,
+  key: string | undefined
+): DeliveryEvidenceContext | null {
+  if (!key) return null;
+  return map.get(key) ?? null;
+}
+
+function readActionVisibleText(payload: RelayActionPayload["payload"]): string | undefined {
+  const text = payload.text ?? payload.caption;
+  return typeof text === "string" && text.trim().length > 0 ? text.trim() : undefined;
+}
+
+function readActionMediaSummary(payload: RelayActionPayload["payload"]): string | undefined {
+  if (typeof payload.mediaUrl === "string" && payload.mediaUrl.trim().length > 0) {
+    return "1 media attachment";
+  }
+  if (Array.isArray(payload.mediaUrls)) {
+    const count = payload.mediaUrls.filter((value) => typeof value === "string" && value.trim().length > 0).length;
+    if (count > 0) return count === 1 ? "1 media attachment" : `${count} media attachments`;
+  }
+  return undefined;
 }
 
 function isRelayReconcileResult(value: unknown): value is

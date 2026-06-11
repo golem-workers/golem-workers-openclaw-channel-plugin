@@ -17,6 +17,62 @@ afterEach(async () => {
 });
 
 describe("RelayClient", () => {
+  it("enriches delivery receipts with visible OpenClaw delivery evidence from the sent action", async () => {
+    const client = new RelayClient({
+      accountId: "acc-1",
+      url: "http://127.0.0.1:1",
+      reconnectBackoffMs: 10,
+      maxReconnectBackoffMs: 20,
+      requestTimeoutMs: 100,
+      healthcheckIntervalMs: 25,
+    });
+    const seenEvents: unknown[] = [];
+    client.on("transportEvent", (event) => {
+      seenEvents.push(event);
+    });
+    const action = {
+      actionId: "action_1",
+      kind: "message.send" as const,
+      idempotencyKey: "idem_1",
+      accountId: "acc-1",
+      transportTarget: { channel: "telegram", chatId: "123" },
+      conversation: { handle: "123" },
+      payload: { text: "Visible Telegram answer" },
+      openclawContext: {
+        sessionKey: "agent:main:telegram:direct:123",
+        runId: "run_1",
+        backendMessageId: "backend_1",
+        correlationMessageId: "corr_1",
+        deliveryKind: "final" as const,
+      },
+    };
+
+    client["rememberDeliveryEvidenceContext"]({ requestId: "request_1", action });
+    client.ingestEvent({
+      type: "event",
+      eventType: "transport.delivery.receipt",
+      payload: {
+        accountId: "acc-1",
+        requestId: "request_1",
+        actionId: "action_1",
+        transportMessageId: "tg_1",
+        status: "sent",
+      },
+    });
+
+    expect(seenEvents[0]).toMatchObject({
+      eventType: "transport.delivery.receipt",
+      payload: {
+        sessionKey: "agent:main:telegram:direct:123",
+        runId: "run_1",
+        backendMessageId: "backend_1",
+        correlationMessageId: "corr_1",
+        deliveryKind: "final",
+        visibleText: "Visible Telegram answer",
+      },
+    });
+  });
+
   it("re-establishes hello after relay restart", async () => {
     const statuses: RelayAccountStatus[] = [];
     let helloCount = 0;

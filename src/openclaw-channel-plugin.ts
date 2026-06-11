@@ -544,6 +544,8 @@ function buildRelayOpenclawContext(input: {
     runId?: string;
     sessionKey?: string;
     deliveryKind?: "tool" | "block" | "final";
+    visibleText?: string;
+    mediaSummary?: string;
   };
 }) {
   const deliveryKind =
@@ -556,7 +558,38 @@ function buildRelayOpenclawContext(input: {
   return {
     ...input.openclawContext,
     deliveryKind,
+    ...buildVisibleDeliverySummary({
+      text: input.text,
+      payload: input.payload,
+    }),
   };
+}
+
+function buildVisibleDeliverySummary(input: {
+  text?: string | null;
+  payload?: Record<string, unknown> | null;
+}): { visibleText?: string; mediaSummary?: string } {
+  const text = (input.text ?? readPayloadTextForSummary(input.payload)).trim();
+  const mediaUrls = readPayloadMediaUrls(input.payload);
+  return {
+    ...(text ? { visibleText: text } : {}),
+    ...(mediaUrls.length > 0 ? { mediaSummary: mediaUrls.length === 1 ? "1 media attachment" : `${mediaUrls.length} media attachments` } : {}),
+  };
+}
+
+function readPayloadTextForSummary(payload: Record<string, unknown> | null | undefined): string {
+  if (!payload) return "";
+  const text = payload.text ?? payload.caption;
+  return typeof text === "string" ? text : "";
+}
+
+function readPayloadMediaUrls(payload: Record<string, unknown> | null | undefined): string[] {
+  if (!payload) return [];
+  if (typeof payload.mediaUrl === "string" && payload.mediaUrl.trim()) return [payload.mediaUrl.trim()];
+  if (Array.isArray(payload.mediaUrls)) {
+    return payload.mediaUrls.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  }
+  return [];
 }
 
 function isSilentControlReplyText(text: string | null | undefined): boolean {
@@ -606,6 +639,8 @@ async function sendRelayMessageThroughSdkAdapter(input: {
     runId?: string;
     sessionKey?: string;
     deliveryKind?: "tool" | "block" | "final";
+    visibleText?: string;
+    mediaSummary?: string;
   };
 }) {
   const runtime = await ensureRuntimeStarted(input.cfg, input.accountId);

@@ -112,6 +112,8 @@ export type RelayActionPayload = {
     backendMessageId?: string;
     correlationMessageId?: string;
     deliveryKind?: "tool" | "block" | "final";
+    visibleText?: string;
+    mediaSummary?: string;
   };
 };
 
