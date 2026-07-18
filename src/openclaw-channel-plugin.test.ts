@@ -15,6 +15,7 @@ const cfg: RelayTestConfig = {
 };
 
 const servers: Server[] = [];
+const MOCK_RELAY_PORT = 23200;
 
 afterEach(async () => {
   await closeAllRelayEventIngressServersForTest();
@@ -146,7 +147,9 @@ async function startMockRelay(options?: {
     res.end();
   });
   servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  // The channel ingress listens on relay port + 2. Avoid an ephemeral relay
+  // port whose adjacent ingress port can already belong to another process.
+  await new Promise<void>((resolve) => server.listen(MOCK_RELAY_PORT, "127.0.0.1", () => resolve()));
   const address = server.address();
   if (!address || typeof address === "string") {
     throw new Error("Failed to get mock relay address");
