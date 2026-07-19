@@ -432,12 +432,12 @@ describe.sequential("relay channel plugin", () => {
     });
     await plugin.gateway.startAccount("default");
 
-    expect(plugin.actions.describeMessageTool("default", "dm").actions).toEqual([
+    await expect.poll(() => plugin.actions.describeMessageTool("default", "dm").actions).toEqual([
       "send",
       "download",
       "approval_native_delivery",
     ]);
-    expect(plugin.actions.describeMessageTool("default", "group").actions).toEqual([
+    await expect.poll(() => plugin.actions.describeMessageTool("default", "group").actions).toEqual([
       "send",
       "typing",
       "download",
