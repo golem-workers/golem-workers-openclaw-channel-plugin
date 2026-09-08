@@ -117,7 +117,8 @@ explicitly via `RELAY_CHANNEL_PLUGIN_GIT_REF` instead of relying on
 ### Build a self-contained bundle
 
 This creates a `.tgz` archive with `dist/`, `openclaw.plugin.json`,
-`package.json`, and production `node_modules`.
+`package.json`, and `package-lock.json`. OpenClaw installs production
+dependencies after extracting the archive.
 
 ```bash
 npm run bundle:agent
