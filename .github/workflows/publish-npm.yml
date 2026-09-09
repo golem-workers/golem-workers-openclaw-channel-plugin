@@ -1,0 +1,48 @@
+name: Publish npm package
+
+run-name: Publish @golemworkers/relay-channel@${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact branch, tag, or commit to publish
+        required: true
+        type: string
+      version:
+        description: Expected package version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact release ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Verify requested version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: node --input-type=module -e 'import pkg from "./package.json" with { type: "json" }; if (pkg.version !== process.env.EXPECTED_VERSION) { throw new Error(`Expected ${process.env.EXPECTED_VERSION}, found ${pkg.version}`); }'
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+      - run: npm run validate:npm-publish
+      - name: Publish with npm trusted publishing
+        run: npm publish --access public
