@@ -37,7 +37,7 @@ describe("buildAgentBundle", () => {
       { encoding: "utf8" }
     );
     expect(packageJson.status, packageJson.stderr).toBe(0);
-    expect(JSON.parse(packageJson.stdout).dependencies).toEqual({ zod: "^4.3.6" });
+    expect(JSON.parse(packageJson.stdout).dependencies).toEqual({ zod: "^4.6.7" });
     expect(await readFile(outputPath)).not.toHaveLength(0);
   });
 });
