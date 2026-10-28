@@ -37,7 +37,8 @@ jobs:
       - name: Verify requested version
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
-        run: node --input-type=module -e 'import pkg from "./package.json" with { type: "json" }; if (pkg.version !== process.env.EXPECTED_VERSION) { throw new Error(`Expected ${process.env.EXPECTED_VERSION}, found ${pkg.version}`); }'
+        run: |
+          node --input-type=module -e 'import pkg from "./package.json" with { type: "json" }; if (pkg.version !== process.env.EXPECTED_VERSION) { throw new Error(`Expected ${process.env.EXPECTED_VERSION}, found ${pkg.version}`); }'
 
       - run: npm ci
       - run: npm run lint
