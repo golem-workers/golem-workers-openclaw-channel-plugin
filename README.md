@@ -248,3 +248,7 @@ own resolved dependency tree, independent of backend/relay: runtime Zod >=4.6.7
 and test-only ws >=8.22.0. Update and validate this tree when baking new images;
 root relay updates do not update an already installed plugin. Existing agent
 updates are performed separately by the owner, not by backend-updater.
+
+### October 2026 toolchain security resolution
+
+The committed lockfile refreshes compatible development dependencies (without runtime API changes or new environment variables). Build/lint/test and the full dependency audit validate the selected graph; existing agent installations are not modified.
