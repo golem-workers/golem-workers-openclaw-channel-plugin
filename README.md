@@ -240,3 +240,11 @@ npm run smoke:agent:mock -- \
   --base-url https://dev-api.golemworkers.com \
   --channel-config-file ./examples/relay-channel.config.json
 ```
+
+## Managed security baseline (2026-10-28)
+
+Managed images use Node.js >=24.22.1 <25 (`.nvmrc`: 24.22.1). The plugin has its
+own resolved dependency tree, independent of backend/relay: runtime Zod >=4.6.7
+and test-only ws >=8.22.0. Update and validate this tree when baking new images;
+root relay updates do not update an already installed plugin. Existing agent
+updates are performed separately by the owner, not by backend-updater.
