@@ -53,6 +53,9 @@ async function startMockRelay(options?: {
 }) {
   let connectionCount = 0;
   const server = createServer(async (req, res) => {
+    // Each test replaces this fixed-port server. Do not let fetch retain a
+    // keep-alive socket to the previous fixture after its server.close().
+    res.setHeader("connection", "close");
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
