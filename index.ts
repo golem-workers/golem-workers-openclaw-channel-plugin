@@ -4,6 +4,8 @@ import {
   setRelayChannelOpenClawRuntime,
 } from "./src/openclaw-channel-plugin.js";
 
+import { registerSubscriptionGuard } from "./src/subscription-guard.js";
+
 export * from "./api.js";
 export * from "./runtime-api.js";
 
@@ -13,4 +15,5 @@ export default defineChannelPluginEntry({
   description: "Relay-backed OpenClaw channel plugin.",
   plugin: relayChannelOpenclawPlugin,
   setRuntime: setRelayChannelOpenClawRuntime,
+  registerFull: registerSubscriptionGuard,
 });
