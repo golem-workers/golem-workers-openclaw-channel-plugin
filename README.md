@@ -252,3 +252,36 @@ updates are performed separately by the owner, not by backend-updater.
 ### October 2026 toolchain security resolution
 
 The committed lockfile refreshes compatible development dependencies (without runtime API changes or new environment variables). Build/lint/test and the full dependency audit validate the selected graph; existing agent installations are not modified.
+
+## Subscription-only pool guard
+
+The optional managed OpenAI subscription pool guard requires the unchanged official
+OpenClaw **2026.11.2 or newer**, the public read-only auth-store SDK and supported
+model-resolution/reply hooks. Ordinary channel operation retains its existing
+minimum host version. Unsupported hosts do not advertise
+`relay-channel.subscriptionGuard.status`; Relay refuses pool authorization before
+credential effects with `OPENAI_POOL_GUARD_UPDATE_REQUIRED`.
+
+A separate, explicit agent setup/update must load this plugin and provision
+`plugins.entries["relay-channel"].hooks.allowConversationAccess: true` (without
+`allowPromptInjection: false`). Authorization never installs plugins, grants hook
+access, repairs the runtime, or changes the selected model/Harness. Configuration
+owners must keep the guard enabled while the managed pool is active. Codex must
+use the standard isolated stdio app-server credential bridge, not user-home or a
+remote app server.
+
+For a managed pool, admission reads the durable pool receipt and the target
+agent's public auth store without refresh, external CLI synchronization or
+keychain prompts. Pending, exhausted, malformed, foreign-token and unsupported
+routes fail closed. Run-scoped `fallbacksOverride: []` suppresses authored model
+fallbacks **without rewriting persisted configuration**. Only the explicit
+ChatGPT subscription route is accepted; unrelated API-key profiles are preserved
+but cannot fund an accepted run. The plugin does not infer dispatch account or
+billing from the current profile pin. Unmanaged agents are unaffected.
+
+Qualification includes pure admission tests and unchanged official-Gateway
+negative probes for chat, external agent RPC, heartbeat/cron context and actual
+`cron.run`, with both OpenClaw and correctly installed official Codex Harness.
+Synthetic API keys and authored paid fallbacks are retained; the negative probes
+run in a network namespace with no external route. These negative probes do not
+replace positive real-subscription or provider-lifecycle acceptance.

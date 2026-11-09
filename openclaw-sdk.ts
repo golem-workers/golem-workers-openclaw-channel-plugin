@@ -290,6 +290,9 @@ export type PluginRuntime = unknown;
 
 export type OpenClawPluginApi = {
   runtime: PluginRuntime;
+  config?: Record<string, unknown>;
+  on?: (name: string, handler: (event: Record<string, unknown>, context: {agentId?: string; modelProviderId?: string; modelId?: string; trigger?: string}) => unknown, options?: {priority?: number}) => void;
+  registerGatewayMethod?: (name: string, handler: (input: {respond: (success: boolean, payload: unknown) => void}) => void, options?: {scope: string}) => void;
   registrationMode?: string;
   registerChannel(input: { plugin: unknown }): void;
 };
