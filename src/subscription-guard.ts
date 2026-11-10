@@ -45,9 +45,9 @@ export function assertPoolAdmission(pool: Pool, store: Store, config: Record<str
   const catalog = { ...record(record(defaults.models)[ref]), ...record(record(agent.models)[ref]) };
   const route = { ...providerConfig, ...row, ...catalog };
   const env = { ...process.env, ...record(config.env), ...record(record(config.env).vars) };
-  // 9.8 normalizes an omitted baseUrl to an empty string; its ChatGPT
-  // transport treats that exact value as the canonical subscription endpoint.
-  const endpoint = requireSelectedModel && route.baseUrl === "" ? undefined : route.baseUrl;
+  // Supported hosts may normalize an omitted baseUrl to an empty string;
+  // the ChatGPT transport uses the canonical endpoint for that exact value.
+  const endpoint = route.baseUrl === "" ? undefined : route.baseUrl;
   if (route.api !== "openai-chatgpt-responses" || !/^https:\/\/chatgpt\.com\/backend-api\/codex\/?$/.test(String(endpoint ?? env.OPENAI_BASE_URL ?? "https://chatgpt.com/backend-api/codex")) || [providerConfig, row, catalog, defaults, agent, record(record(config.providers).openai)].some(r => r.auth !== undefined || r.apiKey !== undefined)) throw new Error("OPENAI_POOL_ROUTE_UNSUPPORTED");
   const enabled = new Set(pool.members.filter(m => m.enabled).map(m => m.profileId));
   for (const m of pool.members) if (m.profileId !== `openai:golem-${m.accountId}`) throw new Error("OPENAI_POOL_ID_INVALID");
@@ -64,7 +64,7 @@ export function assertPoolAdmission(pool: Pool, store: Store, config: Record<str
   if (!eligible) throw new Error("OPENAI_SUBSCRIPTIONS_EXHAUSTED");
 }
 
-/** 9.8 cannot suppress a run's outer fallback chain. Refuse authored fallback
+/** Strict adapters cannot suppress a run's outer fallback chain. Refuse authored fallback
  * sources (including nested/subagent/cron settings), never rewrite user config. */
 export function assertNoConfiguredFallbacks(value: unknown): void {
   if (!value || typeof value !== "object") return;
@@ -81,10 +81,14 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
   const runtime = api.runtime as Runtime;
   const version = runtime.version?.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
   const supportedHost = version && (version[0] > 2026 || (version[0] === 2026 && (version[1] > 11 || (version[1] === 11 && version[2] >= 2))));
-  const legacyHost = version?.[0] === 2026 && version[1] === 9 && version[2] === 8;
+  const minimumHost = version && (version[0] > 2026 || (version[0] === 2026 && (version[1] > 9 || (version[1] === 9 && version[2] >= 8))));
+  const asyncReader = typeof runtime.modelAuth?.ensureAuthProfileStoreAsync === "function";
+  // Preserve the established modern baseline. Intermediate hosts and hosts with
+  // only the synchronous public reader use the conservative strict contract.
+  const legacyHost = !(supportedHost && asyncReader);
   const hookPolicy = record(record(record(record(api.config).plugins).entries)["relay-channel"]).hooks;
   const hooks = record(hookPolicy);
-  const supported = hooks.allowConversationAccess === true && hooks.allowPromptInjection !== false && (supportedHost || legacyHost) && typeof api.on === "function" && (legacyHost ? typeof runtime.modelAuth?.ensureAuthProfileStore === "function" : typeof runtime.modelAuth?.ensureAuthProfileStoreAsync === "function") && typeof runtime.state?.resolveStateDir === "function";
+  const supported = hooks.allowConversationAccess === true && hooks.allowPromptInjection !== false && minimumHost && typeof api.on === "function" && (asyncReader || typeof runtime.modelAuth?.ensureAuthProfileStore === "function") && typeof runtime.state?.resolveStateDir === "function";
   if (!supported) return; // No capability RPC: Relay refuses unsupported hosts before auth effects.
   const stateDir = runtime.state!.resolveStateDir();
   const configPath = process.env.OPENCLAW_CONFIG_PATH ?? path.join(stateDir, "openclaw.json");
@@ -115,9 +119,9 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
           const agentDir = runtime.agent?.resolveAgentDir(cfg, id) ?? (typeof agent.agentDir === "string" ? agent.agentDir : path.join(stateDir, "agents", id, "agent"));
           if (legacyHost) assertNoConfiguredFallbacks(cfg);
           const options = { readOnly: true, syncExternalCli: false, allowKeychainPrompt: false, config: cfg };
-          const store = legacyHost
-            ? runtime.modelAuth!.ensureAuthProfileStore!(agentDir, options)
-            : await runtime.modelAuth!.ensureAuthProfileStoreAsync!(agentDir, options);
+          const store = asyncReader
+            ? await runtime.modelAuth!.ensureAuthProfileStoreAsync!(agentDir, options)
+            : runtime.modelAuth!.ensureAuthProfileStore!(agentDir, options);
           assertPoolAdmission(pool, store, cfg, ctx, Date.now(), legacyHost);
           return "allowed" as const;
         })(),
@@ -141,8 +145,8 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
   api.on!("before_agent_reply", async (_event, ctx) => (await check(ctx)) === "denied" ? { handled: true, reply: { text: denied }, reason: "subscription-only-admission" } : { handled: false }, { priority: 1000000 });
   api.on!("before_agent_run", async (_event, ctx) => {
     const outcome = await check(ctx);
-    if (legacyHost) return outcome === "denied" ? { outcome: "block", reason: "subscription-only-admission", message: denied } : { outcome: "pass" };
-    if (outcome === "denied") throw new Error(denied);
+    // Both historical and modern host hook runners require an explicit decision.
+    return outcome === "denied" ? { outcome: "block", reason: "subscription-only-admission", message: denied } : { outcome: "pass" };
   }, { priority: 1000000 });
   api.registerGatewayMethod?.("relay-channel.subscriptionGuard.status", ({ respond }) => {
     respond(true, legacyHost
