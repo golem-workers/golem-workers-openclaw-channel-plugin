@@ -256,8 +256,10 @@ The committed lockfile refreshes compatible development dependencies (without ru
 ## Subscription-only pool guard
 
 The optional managed OpenAI subscription pool guard requires the unchanged official
-OpenClaw **2026.11.2 or newer**, the public read-only auth-store SDK and supported
-model-resolution/reply hooks. Ordinary channel operation retains its existing
+OpenClaw **2026.9.8 or newer**, the public read-only auth-store SDK and supported
+model/run/reply hooks. There is no gap or upper version-number cutoff. Versions
+2026.9.8 through pre-2026.11.2 use the strict adapter; >=2026.11.2 uses run-scoped
+suppression when the asynchronous reader is available, otherwise strict mode. Ordinary channel operation retains its existing
 minimum host version. Unsupported hosts do not advertise
 `relay-channel.subscriptionGuard.status`; Relay refuses pool authorization before
 credential effects with `OPENAI_POOL_GUARD_UPDATE_REQUIRED`.
@@ -273,8 +275,8 @@ remote app server.
 For a managed pool, admission reads the durable pool receipt and the target
 agent's public auth store without refresh, external CLI synchronization or
 keychain prompts. Pending, exhausted, malformed, foreign-token and unsupported
-routes fail closed. Run-scoped `fallbacksOverride: []` suppresses authored model
-fallbacks **without rewriting persisted configuration**. Only the explicit
+routes fail closed. On >=2026.11.2, run-scoped `fallbacksOverride: []` suppresses
+authored model fallbacks **without rewriting persisted configuration**. Only the explicit
 ChatGPT subscription route is accepted; unrelated API-key profiles are preserved
 but cannot fund an accepted run. The plugin does not infer dispatch account or
 billing from the current profile pin. Unmanaged agents are unaffected.
@@ -285,3 +287,50 @@ negative probes for chat, external agent RPC, heartbeat/cron context and actual
 Synthetic API keys and authored paid fallbacks are retained; the negative probes
 run in a network namespace with no external route. These negative probes do not
 replace positive real-subscription or provider-lifecycle acceptance.
+
+### Continuous host compatibility (>=2026.9.8)
+
+Versions before 2026.11.2 conservatively use strict mode even where intermediate
+hooks already gained some modern features. The adapter prefers the public async
+reader when available, otherwise the synchronous `ensureAuthProfileStore`, with
+`readOnly: true`, no external CLI sync and no keychain prompts. The minimum is
+2026.9.8, with no upper version-number cutoff; unknown versions, missing public
+readers or missing hook consent do not advertise a capability. Version admission
+is not a guarantee against a future incompatible upstream SDK/hook change.
+
+Strict mode advertises capability **v2**, `runScopedFallbacks: false`,
+`configuredFallbacksForbidden: true`, `readOnlyAdmission: true`. Matching Relay
+clears configured model-assignment fallback lists during explicit Connect,
+including nested settings, with config CAS and confirmed Gateway application
+before credential writes. A failed reload remains Pending. The guard itself is
+read-only and repeats the empty-model-fallback check before each run and
+permits only the agent's authored selected primary: injected cron/session
+candidates cannot authorize another model. Model overrides must be explicitly
+saved before use. Only Connect clears model fallbacks; primary, Harness, reasoning,
+and unrelated memory/transport fallback policies are preserved.
+A host-normalized empty default `baseUrl` resolves to the canonical ChatGPT
+endpoint; custom/API endpoints and direct credentials remain forbidden.
+
+>=2026.11.2 with the async public reader keeps capability **v1** and run-scoped
+suppression. A newer host with only the synchronous reader can use strict v2
+instead of being rejected just for lacking async. Both modes return explicit
+`{ outcome: "pass" }` / `{ outcome: "block" }` run decisions: even modern official
+hook runners reject an invalid/void decision.
+
+Reproduce the official-host fixture after building this plugin and Relay:
+
+```sh
+OPENCLAW_ROOT=/path/to/official/openclaw \
+POOL_RELAY_ROOT=/path/to/built/golem-workers-relay \
+node scripts/qualification/openclaw-range.mjs
+```
+
+The old `openclaw-98.mjs` / `OPENCLAW_98_ROOT` entrypoint remains an alias. The
+fixture creates/removes temporary Gateway/state and uses synthetic credentials
+with a child-only synthetic ChatGPT transport. It checks the actual SDK, hook
+runner, loaded capability, native A/429-to-B dispatch, live auth refresh and
+exhausted-pool refusal without API-key dispatch or authored config mutation.
+`chatgpt-fixture.mjs` is test-only: never load it in an agent service. This is
+**not real OAuth inference acceptance**; real-account native/Codex and lifecycle
+acceptance remain separate release gates. See `docs/openclaw-host-compatibility.md`
+for the version matrix and evidence scope.
