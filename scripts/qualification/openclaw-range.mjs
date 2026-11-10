@@ -71,7 +71,7 @@ const cfg = {
       workspace: path.join(root, "workspace"),
       model: {
         primary: "openai/model",
-        fallbacks: modernHost ? ["anthropic/paid"] : [],
+        fallbacks: ["anthropic/paid"],
       },
       params: { transport: "sse" },
     },
@@ -135,12 +135,6 @@ try {
       path.join(relay, "dist/agentControl/openAiSubscriptionPool.js"),
     ).href
   );
-  const pool = prepareSubscriptionPool(null, 1, members);
-  await writeRuntimeAuthPool({ configPath, state: pool, members });
-  await fs.writeFile(
-    configPath + ".golem-openai-pool.json",
-    JSON.stringify({ ...pool, phase: "applied" }),
-  );
   const sdk = await import(
     pathToFileURL(path.join(host, "dist/plugin-sdk/provider-auth.js")).href
   );
@@ -155,14 +149,6 @@ try {
       allowKeychainPrompt: false,
       config: cfg,
     });
-  assert.deepEqual((await read()).order.openai, [
-    "openai:golem-a",
-    "openai:golem-b",
-  ]);
-  const db = path.join(state, "state/openclaw.sqlite");
-  const beforeRead = await fs.readFile(db);
-  await read();
-  assert.deepEqual(await fs.readFile(db), beforeRead);
   gateway = spawn(
     process.execPath,
     [
@@ -221,6 +207,62 @@ try {
         }
       : { version: 1, runScopedFallbacks: true, readOnlyAdmission: true },
   );
+  const { syncSubscriptionPool } = await import(
+    pathToFileURL(
+      path.join(relay, "dist/agentControl/subscriptionPoolManager.js"),
+    ).href
+  );
+  const { refreshSubscriptionPoolAuth, waitForSubscriptionConfigApplied } =
+    await import(
+      pathToFileURL(
+        path.join(relay, "dist/agentControl/subscriptionPoolRuntime.js"),
+      ).href
+    );
+  const pool = await syncSubscriptionPool({
+    configPath,
+    revision: 1,
+    members,
+    assertRuntimeGuard: async () => {
+      const live = await call("relay-channel.subscriptionGuard.status");
+      assert.deepEqual(live, status);
+      return live;
+    },
+    waitForConfigApplied: async (text) => {
+      try {
+        await waitForSubscriptionConfigApplied(configPath, text, {
+          request: call,
+        });
+      } catch (error) {
+        const snapshot = await call("config.get");
+        console.error("Fixture applied config:", {
+          valid: snapshot.valid,
+          configRevisionHash: snapshot.configRevisionHash,
+          appliedConfigHash: snapshot.appliedConfigHash,
+          model: snapshot.config?.agents?.defaults?.model,
+        });
+        console.error("Fixture Gateway:", logs.slice(-7000));
+        throw error;
+      }
+    },
+    refreshRuntimeAuth: () => refreshSubscriptionPoolAuth({ request: call }),
+  });
+  const configAfterConnect = await fs.readFile(configPath, "utf8");
+  const expectedConfig = JSON.parse(configBefore);
+  if (strict) expectedConfig.agents.defaults.model.fallbacks = [];
+  assert.deepEqual(
+    JSON.parse(configAfterConnect),
+    expectedConfig,
+    "Connect may change only model fallback on strict hosts",
+  );
+  if (strict) cfg.agents.defaults.model.fallbacks = [];
+  assert.deepEqual((await read()).order.openai, [
+    "openai:golem-a",
+    "openai:golem-b",
+  ]);
+  const db = path.join(state, "state/openclaw.sqlite");
+  const beforeRead = await fs.readFile(db);
+  await read();
+  assert.deepEqual(await fs.readFile(db), beforeRead);
   // Actual installed hook runner; internal bundled filenames/export aliases are
   // fixture discovery only, never a production plugin dependency.
   const { registerSubscriptionGuard } = await import(
@@ -368,7 +410,7 @@ try {
     JSON.stringify({ ...next, phase: "pending" }),
   );
   await writeRuntimeAuthPool({ configPath, state: next, members: exhausted });
-  await call("models.authStatus", { refresh: true });
+  await refreshSubscriptionPoolAuth({ request: call });
   await fs.writeFile(
     configPath + ".golem-openai-pool.json",
     JSON.stringify({ ...next, phase: "applied" }),
@@ -402,7 +444,7 @@ try {
   }
   assert.match(
     turn,
-    /OPENAI_SUBSCRIPTIONS|subscription-only|golem-subscription-denied|unavailable/i,
+    /OPENAI_SUBSCRIPTIONS|subscription-only|golem-subscription-denied|unavailable|Explicit auth order for openai has no usable profiles\./i,
     "Expected explicit subscription refusal, not a provider reply",
   );
   const finalCalls = await dispatches();
@@ -417,7 +459,7 @@ try {
     healthyCalls.filter((x) => x.account),
     "An exhausted pool must not dispatch any inference request",
   );
-  assert.equal(await fs.readFile(configPath, "utf8"), configBefore);
+  assert.equal(await fs.readFile(configPath, "utf8"), configAfterConnect);
   console.log(
     JSON.stringify(
       {
@@ -432,7 +474,11 @@ try {
         runScopedFallbackSuppressed: !strict,
         exhaustedPoolBlocked: true,
         actualGatewayTurnRefused: true,
-        authoredConfigPreserved: true,
+        coreAuthOrderRefused: turn.includes(
+          "Explicit auth order for openai has no usable profiles.",
+        ),
+        authoredConfigPreservedExceptExplicitStrictFallbackCleanup: true,
+        strictConnectClearedFallbackBeforeAuth: strict,
         realOAuthInference: false,
       },
       null,

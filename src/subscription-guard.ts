@@ -1,3 +1,4 @@
+import { visitSubscriptionModelFallbacks } from "./subscription-model-fallbacks.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -67,14 +68,9 @@ export function assertPoolAdmission(pool: Pool, store: Store, config: Record<str
 /** Strict adapters cannot suppress a run's outer fallback chain. Refuse authored fallback
  * sources (including nested/subagent/cron settings), never rewrite user config. */
 export function assertNoConfiguredFallbacks(value: unknown): void {
-  if (!value || typeof value !== "object") return;
-  for (const [key, child] of Object.entries(value)) {
-    if ((key === "fallback" || key === "fallbacks") && child != null &&
-        !(Array.isArray(child) && child.length === 0) && child !== "") {
-      throw new Error("OPENAI_POOL_MODEL_FALLBACK_FORBIDDEN");
-    }
-    assertNoConfiguredFallbacks(child);
-  }
+  visitSubscriptionModelFallbacks(value, assignment => {
+    if ((Array.isArray(assignment.fallbacks) ? assignment.fallbacks.length > 0 : assignment.fallbacks != null && assignment.fallbacks !== "") || assignment.fallback) throw new Error("OPENAI_POOL_MODEL_FALLBACK_FORBIDDEN");
+  });
 }
 
 export function registerSubscriptionGuard(api: OpenClawPluginApi): void {

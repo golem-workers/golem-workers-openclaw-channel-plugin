@@ -115,3 +115,7 @@ describe("continuous supported host range", () => {
     expect(on).not.toHaveBeenCalled();expect(registerGatewayMethod).not.toHaveBeenCalled();
   });
 });
+
+it("does not treat memory, Harness or transport fallback as model fallback",()=>{
+ expect(()=>assertNoConfiguredFallbacks({agents:{defaults:{model:{primary:"openai/model",fallbacks:[]},memorySearch:{fallback:"none"}}},plugins:{entries:{codex:{config:{fallback:"openclaw"}}}},channels:{fallback:"keep"}})).not.toThrow();
+});

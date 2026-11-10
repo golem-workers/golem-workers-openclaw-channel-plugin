@@ -25,7 +25,8 @@ refresh/external CLI sync/keychain prompts and do not rewrite model/Harness/conf
 The official npm package archives for all **18 stable releases** in 2026.9.8–
 2026.11.2 were inspected read-only. Columns below record public provider-auth
 reader exports and actual run/model-hook implementation, **not an end-to-end
-Gateway execution on every release**. Intermediate releases stay conservatively
+Gateway execution on every release**. All 18 packages also expose the public
+post-mutation `models.authRefresh` handler. Intermediate releases stay conservatively
 strict even if they already retain `fallbacksOverride`.
 
 | Official release | Sync reader | Async reader | Explicit run decision | Hook retains fallbacksOverride |
@@ -55,9 +56,16 @@ Unmodified official packages, pinned Node 24.22.1, sterile temporary HOME/state,
 synthetic JWTs, child-only synthetic ChatGPT transport; test fixture removes its
 Gateway/state. The real SDK, real loaded capability RPC and real host hook runner
 are exercised. Native inference returns A/429 then B. The same live
-`models.authStatus {refresh:true}` sequence as Relay precedes exhausted-pool
-refusal with no further inference requests. Authored config stays byte-identical;
-modern mode additionally retains a paid-model fallback sentinel on disk.
+`agents.list` + `models.authRefresh {operation:"update",agentId}` sequence as
+Relay precedes exhausted-pool
+refusal with no further inference requests. Depending on the host, refusal is
+reported by guard admission or by the earlier explicit-auth-order validation
+(`Explicit auth order for openai has no usable profiles.`); both require zero
+new inference dispatches. Every host starts with a nonempty
+paid-model fallback sentinel. Actual Relay Connect clears it on strict hosts
+with CAS and verified Gateway application before auth writes; the exact rest of
+the config is preserved. Modern mode retains the sentinel and suppresses it per
+run. Admission/refresh thereafter do not rewrite configuration.
 
 | Gateway | Result | Policy |
 | --- | --- | --- |

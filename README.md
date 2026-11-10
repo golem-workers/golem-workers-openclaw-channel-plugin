@@ -300,11 +300,14 @@ is not a guarantee against a future incompatible upstream SDK/hook change.
 
 Strict mode advertises capability **v2**, `runScopedFallbacks: false`,
 `configuredFallbacksForbidden: true`, `readOnlyAdmission: true`. Matching Relay
-rejects any nonempty authored `fallback`/`fallbacks` source before pool effects,
-including nested settings. The guard repeats the check before each run and
+clears configured model-assignment fallback lists during explicit Connect,
+including nested settings, with config CAS and confirmed Gateway application
+before credential writes. A failed reload remains Pending. The guard itself is
+read-only and repeats the empty-model-fallback check before each run and
 permits only the agent's authored selected primary: injected cron/session
 candidates cannot authorize another model. Model overrides must be explicitly
-saved before use. No model/Harness/reasoning/fallback settings are rewritten.
+saved before use. Only Connect clears model fallbacks; primary, Harness, reasoning,
+and unrelated memory/transport fallback policies are preserved.
 A host-normalized empty default `baseUrl` resolves to the canonical ChatGPT
 endpoint; custom/API endpoints and direct credentials remain forbidden.
 
