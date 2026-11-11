@@ -35,7 +35,7 @@ describe("registered guard hooks",()=>{
  });
  it("does not advertise hooks blocked by host conversation-access consent",()=>{registerSubscriptionGuard({config:{},runtime:{version:"2026.11.2",state:{resolveStateDir:()=>"/tmp/unused"},modelAuth:{ensureAuthProfileStoreAsync:()=>{throw Error("must not read");}}},registerChannel:()=>{},on:()=>{throw Error("must not register");},registerGatewayMethod:()=>{throw Error("must not advertise");}});});
  it("does not advertise capability without public read-only SDK support",()=>{const on=()=>{throw Error("must not register");};registerSubscriptionGuard({runtime:{},registerChannel:()=>{},on,registerGatewayMethod:()=>{throw Error("must not advertise");}});});
- it("advertises the loaded guard without disclosing profiles or tokens",async()=>{const f=await fixture();const responses:unknown[]=[];f.rpc!({respond:(_ok,p)=>responses.push(p)});expect(responses).toEqual([{version:1,runScopedFallbacks:true,readOnlyAdmission:true}]);});
+ it("advertises the loaded guard without disclosing profiles or tokens",async()=>{const f=await fixture();const responses:unknown[]=[];f.rpc!({respond:(_ok,p)=>responses.push(p)});expect(responses).toEqual([{version:1,runScopedFallbacks:true,readOnlyAdmission:true,poolExitVersion:1}]);});
 });
 
 
@@ -50,7 +50,7 @@ describe("official 2026.9.8 strict adapter", () => {
   it("uses the read-only synchronous SDK and advertises only strict mode", async () => {
     const f = await fixture(true); await f.write(pool);
     const responses: unknown[] = []; f.rpc!({respond: (_ok,p) => responses.push(p)});
-    expect(responses).toEqual([{version:2,runScopedFallbacks:false,configuredFallbacksForbidden:true,readOnlyAdmission:true}]);
+    expect(responses).toEqual([{version:2,runScopedFallbacks:false,configuredFallbacksForbidden:true,readOnlyAdmission:true,poolExitVersion:1}]);
     const before = structuredClone({config:f.cfg,store:f.s});
     expect(await f.hooks.get("before_agent_run")!({}, {modelProviderId:"openai",modelId:"model"})).toEqual({outcome:"pass"});
     expect(f.reads).toHaveLength(1); expect({config:f.cfg,store:f.s}).toEqual(before);
@@ -87,7 +87,7 @@ describe("continuous supported host range", () => {
     for (const asyncReader of [false,true]) {
       const f=await fixture(true,version,asyncReader);await f.write(pool);const responses:unknown[]=[];
       f.rpc!({respond:(_ok,p)=>responses.push(p)});
-      expect(responses).toEqual([{version:2,runScopedFallbacks:false,configuredFallbacksForbidden:true,readOnlyAdmission:true}]);
+      expect(responses).toEqual([{version:2,runScopedFallbacks:false,configuredFallbacksForbidden:true,readOnlyAdmission:true,poolExitVersion:1}]);
       expect(await f.hooks.get("before_agent_run")!({},{})).toEqual({outcome:"pass"});expect(f.reads).toHaveLength(1);
       f.cfg.agents.defaults.model.fallbacks.push("anthropic/paid");
       expect(await f.hooks.get("before_agent_run")!({},{})).toMatchObject({outcome:"block"});
@@ -95,13 +95,13 @@ describe("continuous supported host range", () => {
   });
   it.each(["2026.11.2","2026.12.1","2027.1.1"])("uses modern proof with async public SDK on %s",async version=>{
     const f=await fixture(false,version);await f.write(pool);const responses:unknown[]=[];f.rpc!({respond:(_ok,p)=>responses.push(p)});
-    expect(responses).toEqual([{version:1,runScopedFallbacks:true,readOnlyAdmission:true}]);
+    expect(responses).toEqual([{version:1,runScopedFallbacks:true,readOnlyAdmission:true,poolExitVersion:1}]);
     expect(await f.hooks.get("before_agent_run")!({},{})).toEqual({outcome:"pass"});
     expect(await f.hooks.get("before_model_resolve")!({},{})).toEqual({fallbacksOverride:[]});
   });
   it("uses strict proof on a newer host with only the synchronous public SDK",async()=>{
     const f=await fixture(true,"2026.11.2",false);await f.write(pool);const responses:unknown[]=[];f.rpc!({respond:(_ok,p)=>responses.push(p)});
-    expect(responses).toEqual([{version:2,runScopedFallbacks:false,configuredFallbacksForbidden:true,readOnlyAdmission:true}]);
+    expect(responses).toEqual([{version:2,runScopedFallbacks:false,configuredFallbacksForbidden:true,readOnlyAdmission:true,poolExitVersion:1}]);
     expect(await f.hooks.get("before_agent_run")!({},{})).toEqual({outcome:"pass"});
   });
   it.each(["2026.8.99","2026.9.7","2025.12.31","unknown"])("does not qualify below-minimum/unknown host %s", async version => {
@@ -118,4 +118,20 @@ describe("continuous supported host range", () => {
 
 it("does not treat memory, Harness or transport fallback as model fallback",()=>{
  expect(()=>assertNoConfiguredFallbacks({agents:{defaults:{model:{primary:"openai/model",fallbacks:[]},memorySearch:{fallback:"none"}}},plugins:{entries:{codex:{config:{fallback:"openclaw"}}}},channels:{fallback:"keep"}})).not.toThrow();
+});
+
+
+describe("revisioned pool exit admission", () => {
+ it("releases only the completed empty tombstone, never reads OAuth or suppresses API fallbacks", async () => {
+  const f=await fixture(true); await f.write({...pool,phase:"exited",members:[],managedProfileIds:[]});
+  expect(await f.hooks.get("before_model_resolve")!({},{})).toBeUndefined();
+  expect(await f.hooks.get("before_agent_run")!({},{})).toEqual({outcome:"pass"});
+  expect(f.reads).toEqual([]);
+  await fs.rm(poolGuardStatePath(process.env.OPENCLAW_CONFIG_PATH!));
+  expect(await f.hooks.get("before_agent_run")!({},{})).toMatchObject({outcome:"block"});
+ });
+ it.each([{phase:"exiting",members:[],managedProfileIds:[]},{phase:"exited",members:pool.members,managedProfileIds:[]},{phase:"exited",members:[],managedProfileIds:["openai:golem-a"]},{phase:"exited",members:[]}])("keeps partial or malformed exit fail-closed %j", async patch => {
+  const f=await fixture(); await f.write({...pool,...patch});
+  expect(await f.hooks.get("before_agent_run")!({},{})).toMatchObject({outcome:"block"});
+ });
 });

@@ -10,8 +10,9 @@ const memberSchema = z.object({
 });
 const poolSchema = z.object({
   version: z.literal(1), revision: z.number().int().positive(),
-  phase: z.enum(["pending", "applied"]), members: z.array(memberSchema).max(32),
-});
+  phase: z.enum(["pending", "applied", "exiting", "exited"]), members: z.array(memberSchema).max(32),
+  managedProfileIds: z.array(z.string()).optional(),
+}).refine(pool => pool.phase !== "exited" || (pool.members.length === 0 && pool.managedProfileIds?.length === 0), { message: "OPENAI_POOL_INVALID" });
 type Pool = z.infer<typeof poolSchema>;
 type Context = { agentId?: string; modelProviderId?: string; modelId?: string; trigger?: string };
 type Store = { profiles: Record<string, Record<string, unknown>>; usageStats?: Record<string, Record<string, unknown>> };
@@ -106,7 +107,8 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
       return await Promise.race([
         (async () => {
           const pool = await readPool();
-          if (!pool) return "unmanaged" as const;
+          if (!pool || pool.phase === "exited") return "unmanaged" as const;
+          if (pool.phase === "exiting") throw new Error("OPENAI_POOL_PENDING");
           const id = ctx.agentId ?? "main";
           if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("OPENAI_POOL_AGENT_UNSUPPORTED");
           const cfg = runtime.config?.current() ?? api.config ?? {};
@@ -146,7 +148,7 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
   }, { priority: 1000000 });
   api.registerGatewayMethod?.("relay-channel.subscriptionGuard.status", ({ respond }) => {
     respond(true, legacyHost
-      ? { version: 2, runScopedFallbacks: false, configuredFallbacksForbidden: true, readOnlyAdmission: true }
-      : { version: 1, runScopedFallbacks: true, readOnlyAdmission: true });
+      ? { version: 2, runScopedFallbacks: false, configuredFallbacksForbidden: true, readOnlyAdmission: true, poolExitVersion: 1 }
+      : { version: 1, runScopedFallbacks: true, readOnlyAdmission: true, poolExitVersion: 1 });
   }, { scope: "operator.read" });
 }

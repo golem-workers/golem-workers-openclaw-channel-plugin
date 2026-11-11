@@ -355,3 +355,15 @@ and complete the host's normal Doctor/update transaction. Do not delete the host
 deferred-migration metadata or replace it with a successful marker. A failed Relay
 maintenance receipt is separate: reconcile the current package and config after
 repair before authorizing an operator retry, as documented by the Relay updater.
+
+## Explicit pool exit
+
+The live guard RPC additionally advertises `poolExitVersion: 1`. The coordinated
+Relay checks this before beginning exit; older plugins are not compatible with
+exit tombstones. `exiting` remains fail-closed. Only `exited` with an empty member
+list and an explicitly empty `managedProfileIds` list releases subscription
+admission, without reading OAuth or suppressing API fallbacks. A malformed
+tombstone or disappearance after any observed receipt still fails closed.
+Removing subscriptions or exhausting credentials is not an exit and does not
+enable API billing. Re-entry at a higher revision restores ordinary admission.
+The plugin does not write routes, credentials, selection state or receipts.
