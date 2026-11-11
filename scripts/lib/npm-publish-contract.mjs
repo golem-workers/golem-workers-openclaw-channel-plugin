@@ -7,7 +7,7 @@ const REQUIRED_PACKAGE_FIELDS = ["name", "version", "description", "repository.u
 
 const REQUIRED_MANIFEST_FIELDS = ["id", "kind", "channels", "channelConfigs"];
 
-const REQUIRED_PUBLISH_FILES = ["dist/index.js", "dist/setup-entry.js", "openclaw.plugin.json"];
+const REQUIRED_PUBLISH_FILES = ["dist/index.js", "dist/setup-entry.js", "dist/doctor-contract-api.js", "openclaw.plugin.json"];
 
 export const EXPECTED_NPM_PACKAGE_NAME = "@golemworkers/relay-channel";
 
@@ -44,6 +44,10 @@ export function collectNpmPublishContractIssues(input) {
   const issues = [];
   const packageJson = input.packageJson;
   const manifest = input.manifest;
+  if (manifest.doctorContract?.configRepair !== true || !Array.isArray(manifest.doctorContract?.stateMigrations) || manifest.doctorContract.stateMigrations.length !== 0) {
+    issues.push("openclaw.plugin.json must declare the config-repair Doctor contract and an empty core state-migration inventory");
+  }
+
 
   for (const fieldPath of REQUIRED_PACKAGE_FIELDS) {
     if (!normalizeString(readPath(packageJson, fieldPath))) {

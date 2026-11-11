@@ -29,6 +29,10 @@ describe("buildAgentBundle", () => {
     expect(entries).toContain("relay-channel/package.json");
     expect(entries).toContain("relay-channel/package-lock.json");
     expect(entries).toContain("relay-channel/dist/index.js");
+    expect(entries).toContain("relay-channel/dist/doctor-contract-api.js");
+    const manifest = spawnSync("tar", ["-xOf", outputPath, "relay-channel/dist/openclaw.plugin.json"], { encoding: "utf8" });
+    expect(manifest.status, manifest.stderr).toBe(0);
+    expect(JSON.parse(manifest.stdout).doctorContract).toEqual({ configRepair: true, stateMigrations: [] });
     expect(entries.some((entry) => entry.includes("/node_modules/"))).toBe(false);
 
     const packageJson = spawnSync(

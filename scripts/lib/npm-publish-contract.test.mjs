@@ -33,6 +33,7 @@ function baseManifest() {
   return {
     id: "relay-channel",
     kind: "channel",
+    doctorContract: { configRepair: true, stateMigrations: [] },
     channels: ["relay-channel"],
     channelConfigs: {
       "relay-channel": {
@@ -58,6 +59,13 @@ describe("collectNpmPublishContractIssues", () => {
         manifest: baseManifest(),
       })
     ).toEqual([]);
+  });
+
+  it("refuses a release without a usable Doctor declaration", () => {
+    const manifest = baseManifest(); delete manifest.doctorContract;
+    expect(collectNpmPublishContractIssues({ packageJson: basePackageJson(), manifest })).toContain(
+      "openclaw.plugin.json must declare the config-repair Doctor contract and an empty core state-migration inventory"
+    );
   });
 
   it("rejects private packages and wrong npm spec", () => {
