@@ -187,5 +187,9 @@
         }
       }
     }
+  },
+  "doctorContract": {
+    "configRepair": true,
+    "stateMigrations": []
   }
 }

@@ -334,3 +334,24 @@ exhausted-pool refusal without API-key dispatch or authored config mutation.
 **not real OAuth inference acceptance**; real-account native/Codex and lifecycle
 acceptance remain separate release gates. See `docs/openclaw-host-compatibility.md`
 for the version matrix and evidence scope.
+
+## Native Doctor compatibility
+
+The published package and agent bundle include `dist/doctor-contract-api.js`.
+OpenClaw can load this metadata-only entry to inspect deferred configuration
+migrations before replacing an older plugin. It validates the saved
+`plugins.entries["relay-channel"].config` against the current plugin schema and
+leaves supported configuration unchanged: defaults are not written back and
+model, authorization, hooks/consent and other plugin settings are not modified.
+Unsupported saved configuration produces a bounded warning without echoing its
+contents; the host keeps the migration blocked instead of discarding settings.
+The entry does not register the channel, open sockets or access OAuth/pool files.
+It declares no core session-store state migrations; the existing runtime and
+Relay retain ownership of those stores.
+
+Older installed packages with a deferred migration and no Doctor artifact cannot
+be upgraded by merely repeating npm install. Use a release containing this entry
+and complete the host's normal Doctor/update transaction. Do not delete the host's
+deferred-migration metadata or replace it with a successful marker. A failed Relay
+maintenance receipt is separate: reconcile the current package and config after
+repair before authorizing an operator retry, as documented by the Relay updater.
