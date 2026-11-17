@@ -22,6 +22,7 @@ import {
   formatTargetDisplay as formatResolvedTargetDisplay,
   inferTargetChatType,
   normalizeTarget,
+  qualifyRelayTarget,
   parseExplicitTarget,
   resolveTarget,
 } from "./target-resolution.js";
@@ -928,7 +929,7 @@ const relayChannelBase = createChannelPluginBase<RelayResolvedAccount>({
   agentPrompt: {
     messageToolHints: () => [
       "- For relay transport, keep `channel` as `relay-channel` when you specify it explicitly.",
-      "- Put the recipient into `target`, not into `channel`. Use provider-prefixed relay targets such as `telegram:123456789` or `telegram:group:-100123`.",
+      "- Put the recipient into `target`, not into `channel`. Use namespaced relay targets such as `relay-channel:telegram:123456789` or `relay-channel:telegram:group:-100123`.",
     ],
   },
   reload: {
@@ -1024,16 +1025,16 @@ export const relayChannelOpenclawPlugin = {
     },
   },
   messaging: {
-    normalizeTarget,
+    normalizeTarget: qualifyRelayTarget,
     parseExplicitTarget({ raw }) {
       const parsed = parseExplicitTarget(raw);
       if (!parsed) {
         return null;
       }
       return {
-        to: parsed.scope
+        to: qualifyRelayTarget(parsed.scope
           ? `${parsed.channel}:${parsed.scope}:${parsed.conversationId}`
-          : `${parsed.channel}:${parsed.conversationId}`,
+          : `${parsed.channel}:${parsed.conversationId}`),
         threadId: parsed.threadId ?? undefined,
         chatType: mapRelayScopeToChatType(parsed.scope),
       };
@@ -1071,7 +1072,7 @@ export const relayChannelOpenclawPlugin = {
         },
         chatType: mapRelayScopeToChatType(resolvedTarget.kind),
         from: agentId,
-        to: route.conversationId,
+        to: qualifyRelayTarget(resolvedTarget.to),
         ...(route.threadId ? { threadId: route.threadId } : {}),
       };
     },
@@ -1080,7 +1081,7 @@ export const relayChannelOpenclawPlugin = {
         return parseExplicitTarget(normalized ?? raw) !== null || Boolean(normalizeTarget(raw));
       },
       hint:
-        "Set channel to relay-channel and pass the recipient through target as an explicit provider target like telegram:<chatId> or telegram:group:<chatId>.",
+        "Set channel to relay-channel and pass the recipient through target as an explicit provider target like relay-channel:telegram:<chatId> or relay-channel:telegram:group:<chatId>.",
       async resolveTarget({ cfg, accountId, input }) {
         const runtime = getRuntime(cfg, accountId);
         const resolved = resolveTarget(input, {
@@ -1090,7 +1091,7 @@ export const relayChannelOpenclawPlugin = {
           ),
         });
         return {
-          to: resolved.to,
+          to: qualifyRelayTarget(resolved.to),
           kind: mapRelayScopeToDirectoryKind(resolved.kind),
           display: resolved.display,
           source: "normalized" as const,
@@ -1105,7 +1106,7 @@ export const relayChannelOpenclawPlugin = {
         return {
           input,
           resolved: true,
-          id: resolved.to,
+          id: qualifyRelayTarget(resolved.to),
           name: resolved.display,
           note: "normalized explicit relay target",
         };

@@ -12,7 +12,7 @@ const SEND_MESSAGE_SCHEMA = {
     },
     target: {
       type: "string",
-      description: "Provider-prefixed target, for example telegram:123456789.",
+      description: "Relay-namespaced target, for example relay-channel:telegram:123456789.",
     },
     to: {
       type: "string",

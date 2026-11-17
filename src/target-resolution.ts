@@ -11,8 +11,14 @@ export function normalizeTarget(input: string): string {
   return input.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-export function parseExplicitTarget(input: string): ParsedExplicitTarget | null {
+export function qualifyRelayTarget(input: string): string {
   const normalized = normalizeTarget(input);
+  return !normalized || normalized.startsWith("relay-channel:") ? normalized : `relay-channel:${normalized}`;
+}
+
+export function parseExplicitTarget(input: string): ParsedExplicitTarget | null {
+  // The outer namespace belongs to OpenClaw; the inner provider belongs to Relay.
+  const normalized = normalizeTarget(input).replace(/^relay-channel:/, "");
   const legacyMatch = normalized.match(
     /^(?<channel>[a-z0-9_-]+):(?<scope>dm|group|topic):(?<conversationId>[^#]+?)(?:#(?<threadId>[^#]+))?$/
   );
@@ -38,7 +44,7 @@ export function parseExplicitTarget(input: string): ParsedExplicitTarget | null 
 }
 
 export function inferTargetChatType(input: string): RelayTargetScope {
-  const normalized = normalizeTarget(input);
+  const normalized = normalizeTarget(input).replace(/^relay-channel:/, "");
   if (normalized.includes("#")) {
     return "topic";
   }
@@ -52,6 +58,7 @@ export function resolveTarget(
   input: string,
   options?: { defaultChannel?: string | null }
 ): RelayResolvedTarget {
+  input = normalizeTarget(input).replace(/^relay-channel:/, "");
   const explicit = parseExplicitTarget(input);
   if (explicit) {
     return {
