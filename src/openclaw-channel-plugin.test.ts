@@ -188,11 +188,33 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
     });
 
     expect(resolved).toEqual({
-      to: "telegram:group:-100",
+      to: "relay-channel:telegram:group:-100",
       kind: "group",
       display: "telegram:group:-100",
       source: "normalized",
     });
+  });
+
+  it.each(["relay-channel:telegram:123", "relay-channel:telegram:group:-100", "relay-channel:telegram:topic:-100#77"])(
+    "keeps the host namespace while resolving %s", async (input) => {
+      const resolved = await relayChannelOpenclawPlugin.messaging!.targetResolver!.resolveTarget!({
+        cfg, accountId: "default", input, normalized: input,
+      });
+      expect(resolved?.to).toBe(input.replace(/#77$/, ""));
+      const parsed = relayChannelOpenclawPlugin.messaging!.parseExplicitTarget!({ raw: input });
+      expect(parsed?.to).toBe(input.replace(/#77$/, ""));
+      if (input.endsWith("#77")) expect(parsed?.threadId).toBe("77");
+    }
+  );
+
+  it("namespaces normalized host targets and preserves the routed provider", () => {
+    expect(relayChannelOpenclawPlugin.messaging!.normalizeTarget!("telegram:group:-100"))
+      .toBe("relay-channel:telegram:group:-100");
+    const route = relayChannelOpenclawPlugin.messaging!.resolveOutboundSessionRoute!({
+      agentId: "main", target: "relay-channel:telegram:topic:-100#77", threadId: "77",
+    });
+    expect(route.to).toBe("relay-channel:telegram:topic:-100");
+    expect(route.threadId).toBe("77");
   });
 
   it("supports channels resolve for explicit relay targets", async () => {
@@ -215,7 +237,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
       {
         input: "telegram:topic:-100#77",
         resolved: true,
-        id: "telegram:topic:-100",
+        id: "relay-channel:telegram:topic:-100",
         name: "telegram:topic:-100#77",
         note: "normalized explicit relay target",
       },
@@ -549,7 +571,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
 
     const result = await relayChannelOpenclawPlugin.message!.send!.text!({
       cfg: runtimeCfg as never,
-      to: "telegram:123",
+      to: "relay-channel:telegram:123",
       text: "SDK relay message",
       accountId: "sdk-text",
       replyToId: "789",
@@ -691,7 +713,7 @@ describe.sequential("relayChannelOpenclawPlugin", () => {
 
     const result = await relayChannelOpenclawPlugin.message!.send!.payload!({
       cfg: runtimeCfg as never,
-      to: "telegram:123",
+      to: "relay-channel:telegram:123",
       text: "Attached: [a.txt](/tmp/a.txt) [b.txt](/tmp/b.txt)",
       payload: {
         silent: true,

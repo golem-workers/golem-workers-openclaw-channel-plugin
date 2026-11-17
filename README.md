@@ -367,3 +367,12 @@ tombstone or disappearance after any observed receipt still fails closed.
 Removing subscriptions or exhausting credentials is not an exit and does not
 enable API billing. Re-entry at a higher revision restores ordinary admission.
 The plugin does not write routes, credentials, selection state or receipts.
+
+### Managed message targets
+
+Use `channel: "relay-channel"` with `target: "relay-channel:telegram:<chatId>"`
+(or `relay-channel:telegram:group:<chatId>` for a group). The outer namespace
+selects the OpenClaw plugin; the inner provider remains the Relay transport.
+Legacy provider targets are still accepted by the plugin and normalized at the
+host boundary. Do not register `telegram` as a Relay channel alias: native
+Telegram and Relay must remain distinct.
