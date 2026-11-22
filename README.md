@@ -281,6 +281,21 @@ ChatGPT subscription route is accepted; unrelated API-key profiles are preserved
 but cannot fund an accepted run. The plugin does not infer dispatch account or
 billing from the current profile pin. Unmanaged agents are unaffected.
 
+Explicit cyber-only escalation on modern hosts is supported when both
+`agents.defaults.embeddedAgent.cyberFailover.mode = "auto"` and a fully qualified
+`cyberFailover.model` are authored. There is no implicit target/alias opt-in.
+In this mode the guard does not return `fallbacksOverride`, because even an empty
+hook-owned chain disables OpenClaw's separate replay-safe cyber escalation.
+All configured general model fallback chains (including nested agents/cron) must
+be empty; otherwise admission fails closed. The original ChatGPT route and pool
+are still validated, including at the candidate gate. Only the exact configured
+cyber target is accepted at `before_agent_run`; initial non-subscription selection
+and unrelated candidates remain denied. Legacy hosts remain strict. The host
+owns cyber-refusal detection and replay safety; the plugin does not synthesize a
+refusal, enable cyber handling in Codex, or bypass the provider's normal billing
+and spending-limit enforcement. Enabling paid inference also requires the agent
+and organization billing permissions and a model-specific spending limit.
+
 Qualification includes pure admission tests and unchanged official-Gateway
 negative probes for chat, external agent RPC, heartbeat/cron context and actual
 `cron.run`, with both OpenClaw and correctly installed official Codex Harness.

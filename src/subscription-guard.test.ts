@@ -135,3 +135,50 @@ describe("revisioned pool exit admission", () => {
   expect(await f.hooks.get("before_agent_run")!({},{})).toMatchObject({outcome:"block"});
  });
 });
+
+describe("explicit cyber-only escalation", () => {
+  const target = "openrouter/moonshotai/kimi-k3.1-pro";
+  function enable(f: Awaited<ReturnType<typeof fixture>>, model = target, mode = "auto") {
+    f.cfg.agents.defaults.model.fallbacks = [];
+    Object.assign(f.cfg.agents.defaults, { embeddedAgent: { cyberFailover: { mode, model } } });
+  }
+  it("leaves host cyber escalation unclaimed only for explicit opt-in", async () => {
+    const f = await fixture(); await f.write(pool); enable(f);
+    const before = structuredClone({cfg:f.cfg,store:f.s});
+    expect(await f.hooks.get("before_model_resolve")!({},{})).toBeUndefined();
+    expect(await f.hooks.get("before_agent_run")!({}, {modelProviderId:"openai",modelId:"model"})).toEqual({outcome:"pass"});
+    expect(await f.hooks.get("before_agent_run")!({}, {modelProviderId:"openrouter",modelId:"moonshotai/kimi-k3.1-pro"})).toEqual({outcome:"pass"});
+    expect({cfg:f.cfg,store:f.s}).toEqual(before);
+  });
+  it("does not permit a direct non-subscription model selection or a different candidate", async () => {
+    const f=await fixture();await f.write(pool);enable(f);
+    const ctx={modelProviderId:"openrouter",modelId:"moonshotai/kimi-k3.1-pro"};
+    expect(await f.hooks.get("before_model_resolve")!({},ctx)).toMatchObject({providerOverride:"golem-subscription-denied"});
+    expect(await f.hooks.get("before_agent_reply")!({},ctx)).toMatchObject({handled:true});
+    expect(await f.hooks.get("before_agent_run")!({}, {...ctx,modelId:"different"})).toMatchObject({outcome:"block"});
+  });
+  it.each(["off", "missing-mode", "missing-model", "alias"])("keeps strict run fallback suppression for %s", async kind=>{
+    const f=await fixture();await f.write(pool);enable(f,kind==="alias"?"kimi":target,kind==="off"?"off":"auto");
+    const defaults=f.cfg.agents.defaults as unknown as {embeddedAgent:{cyberFailover:Record<string,unknown>}};
+    if(kind==="missing-mode")delete defaults.embeddedAgent.cyberFailover.mode;
+    if(kind==="missing-model")delete defaults.embeddedAgent.cyberFailover.model;
+    expect(await f.hooks.get("before_model_resolve")!({},{})).toEqual({fallbacksOverride:[]});
+    expect(await f.hooks.get("before_agent_run")!({}, {modelProviderId:"openrouter",modelId:"moonshotai/kimi-k3.1-pro"})).toMatchObject({outcome:"block"});
+  });
+  it("refuses general fallback chains instead of silently enabling them", async()=>{
+    const f=await fixture();await f.write(pool);enable(f);f.cfg.agents.defaults.model.fallbacks=[target];
+    expect(await f.hooks.get("before_model_resolve")!({},{})).toMatchObject({providerOverride:"golem-subscription-denied"});
+  });
+  it.each(["pending","exhausted","malformed","foreign","route"])("still denies cyber candidate for %s admission", async kind=>{
+    const f=await fixture();enable(f);await f.write(kind==="pending"?{...pool,phase:"pending"}:kind==="malformed"?{version:42}:pool);
+    if(kind==="exhausted")for(const m of pool.members)f.s.usageStats[m.profileId]={cooldownUntil:Date.now()+10000};
+    if(kind==="foreign")f.s.profiles.foreign={...profile,expires:Date.now()+100000};
+    if(kind==="route")Object.assign(f.cfg.models.providers.openai,{baseUrl:"https://api.openai.com/v1"});
+    expect(await f.hooks.get("before_agent_run")!({}, {modelProviderId:"openrouter",modelId:"moonshotai/kimi-k3.1-pro"})).toMatchObject({outcome:"block"});
+  });
+  it("keeps legacy hosts strict even with explicit cyber configuration", async()=>{
+    const f=await fixture(true);await f.write(pool);enable(f);
+    expect(await f.hooks.get("before_model_resolve")!({},{})).toEqual({fallbacksOverride:[]});
+    expect(await f.hooks.get("before_agent_run")!({}, {modelProviderId:"openrouter",modelId:"moonshotai/kimi-k3.1-pro"})).toMatchObject({outcome:"block"});
+  });
+});
