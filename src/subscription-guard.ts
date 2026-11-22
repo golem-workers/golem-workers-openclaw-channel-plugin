@@ -66,6 +66,16 @@ export function assertPoolAdmission(pool: Pool, store: Store, config: Record<str
   if (!eligible) throw new Error("OPENAI_SUBSCRIPTIONS_EXHAUSTED");
 }
 
+/** Opt-in only: never inherit the host's implicit cyber escalation target. */
+export function explicitCyberFailoverTarget(config: Record<string, unknown>): string | undefined {
+  const cyber = record(record(record(record(config.agents).defaults).embeddedAgent).cyberFailover);
+  if (cyber.mode !== "auto" || typeof cyber.model !== "string") return;
+  const target = cyber.model.trim();
+  // Require an unambiguous provider/model reference, not an alias.
+  if (!/^[a-z0-9][a-z0-9_-]*\/[^\s/]+(?:\/[^\s/]+)*$/.test(target)) return;
+  return target;
+}
+
 /** Strict adapters cannot suppress a run's outer fallback chain. Refuse authored fallback
  * sources (including nested/subagent/cron settings), never rewrite user config. */
 export function assertNoConfiguredFallbacks(value: unknown): void {
@@ -101,7 +111,7 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
       throw error;
     }
   };
-  const check = async (ctx: Context): Promise<"unmanaged" | "allowed" | "denied"> => {
+  const check = async (ctx: Context, allowCyberCandidate = false): Promise<"unmanaged" | "allowed" | "cyber" | "denied"> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -115,13 +125,21 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
           const agents = record(cfg.agents);
           const agent = (Array.isArray(agents.list) ? agents.list.map(record) : []).find(a => a.id === id) ?? record(record(agents.entries)[id]);
           const agentDir = runtime.agent?.resolveAgentDir(cfg, id) ?? (typeof agent.agentDir === "string" ? agent.agentDir : path.join(stateDir, "agents", id, "agent"));
-          if (legacyHost) assertNoConfiguredFallbacks(cfg);
+          const cyberTarget = !legacyHost ? explicitCyberFailoverTarget(cfg) : undefined;
+          // Without a hook-owned empty chain, authored general fallbacks would
+          // also become active. Keep those forbidden in cyber-only mode.
+          if (legacyHost || cyberTarget) assertNoConfiguredFallbacks(cfg);
           const options = { readOnly: true, syncExternalCli: false, allowKeychainPrompt: false, config: cfg };
           const store = asyncReader
             ? await runtime.modelAuth!.ensureAuthProfileStoreAsync!(agentDir, options)
             : runtime.modelAuth!.ensureAuthProfileStore!(agentDir, options);
-          assertPoolAdmission(pool, store, cfg, ctx, Date.now(), legacyHost);
-          return "allowed" as const;
+          const isCyberCandidate = allowCyberCandidate && cyberTarget !== undefined && `${ctx.modelProviderId}/${ctx.modelId}` === cyberTarget;
+          // Validate the original subscription route, credentials and pool even
+          // for the explicitly authorized paid candidate. Never bypass admission
+          // because a pool is pending, malformed or exhausted.
+          const admissionContext = isCyberCandidate ? { agentId: ctx.agentId } : ctx;
+          assertPoolAdmission(pool, store, cfg, admissionContext, Date.now(), legacyHost);
+          return cyberTarget ? "cyber" as const : "allowed" as const;
         })(),
         new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("OPENAI_POOL_ADMISSION_TIMEOUT")), 2000); }),
       ]);
@@ -135,14 +153,16 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
   };
   api.on!("before_model_resolve", async (_event, ctx) => {
     const outcome = await check(ctx);
-    if (outcome === "unmanaged") return;
+    if (outcome === "unmanaged" || outcome === "cyber") return;
+    // Cyber-only mode must not claim fallbacksOverride: even an empty list
+    // disables the host's separate replay-safe cyber-refusal escalation.
     // An invalid, plugin-owned route is deliberate fail-closed admission on
     // hosts which skip before_agent_reply for an unclassified trigger.
     return outcome === "denied" ? { providerOverride: "golem-subscription-denied", modelOverride: "unavailable", fallbacksOverride: [] } : { fallbacksOverride: [] };
   }, { priority: 1000000 });
   api.on!("before_agent_reply", async (_event, ctx) => (await check(ctx)) === "denied" ? { handled: true, reply: { text: denied }, reason: "subscription-only-admission" } : { handled: false }, { priority: 1000000 });
   api.on!("before_agent_run", async (_event, ctx) => {
-    const outcome = await check(ctx);
+    const outcome = await check(ctx, true);
     // Both historical and modern host hook runners require an explicit decision.
     return outcome === "denied" ? { outcome: "block", reason: "subscription-only-admission", message: denied } : { outcome: "pass" };
   }, { priority: 1000000 });
