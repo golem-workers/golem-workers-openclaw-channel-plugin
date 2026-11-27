@@ -391,3 +391,6 @@ selects the OpenClaw plugin; the inner provider remains the Relay transport.
 Legacy provider targets are still accepted by the plugin and normalized at the
 host boundary. Do not register `telegram` as a Relay channel alias: native
 Telegram and Relay must remain distinct.
+
+### Subscription denial diagnostics
+Expired assigned OAuth credentials report `OPENAI_SUBSCRIPTIONS_EXPIRED`, not proof of provider quota exhaustion. Later hooks recheck the authored subscription route when they receive the guard's own `golem-subscription-denied` sentinel, preserving the primary admission failure instead of reporting a second `OPENAI_POOL_ROUTE_UNSUPPORTED`. Checks remain read-only and fail closed with no API-key/credits fallback.
