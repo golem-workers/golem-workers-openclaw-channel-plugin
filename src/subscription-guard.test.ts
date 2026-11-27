@@ -15,7 +15,7 @@ afterEach(async()=>{if(oldConfigPath===undefined)delete process.env.OPENCLAW_CON
 describe("pure subscription admission",()=>{
  it("allows B after A cooldown without changing retained credentials or authored fallbacks",()=>{const s=store();s.usageStats["openai:golem-a"]={cooldownUntil:now+50000};const before=structuredClone({s,config});assertPoolAdmission(pool,s,config,{},now);expect({s,config}).toEqual(before);});
  it.each(["cooldownUntil","disabledUntil","blockedUntil"])("refuses exhausted %s before inference",key=>{const s=store();for(const id of ["openai:golem-a","openai:golem-b"])s.usageStats[id]={[key]:now+1};expect(()=>assertPoolAdmission(pool,s,config,{},now)).toThrow("EXHAUSTED");});
- it("refuses expired OAuth despite API credentials",()=>{const s=store();s.profiles["openai:golem-a"].expires=1;s.profiles["openai:golem-b"].expires=1;expect(()=>assertPoolAdmission(pool,s,config,{},now)).toThrow("EXHAUSTED");});
+ it("refuses expired OAuth despite API credentials",()=>{const s=store();s.profiles["openai:golem-a"].expires=1;s.profiles["openai:golem-b"].expires=1;expect(()=>assertPoolAdmission(pool,s,config,{},now)).toThrow("EXPIRED");});
  it.each(["oauth","token"])("refuses foreign %s even when the runtime could repair stale order",type=>{const s=store();s.profiles.foreign={...profile,type};expect(()=>assertPoolAdmission(pool,s,config,{},now)).toThrow("UNMANAGED");});
  it("refuses disabled residual profiles",()=>expect(()=>assertPoolAdmission({...pool,members:pool.members.map(m=>({...m,enabled:false}))},store(),config,{},now)).toThrow("UNMANAGED"));
  it("refuses partial apply and a non-pool provider override",()=>{expect(()=>assertPoolAdmission({...pool,phase:"pending"},store(),config,{},now)).toThrow("PENDING");expect(()=>assertPoolAdmission(pool,store(),config,{modelProviderId:"anthropic",modelId:"paid"},now)).toThrow("ROUTE_UNSUPPORTED");});
@@ -26,6 +26,18 @@ describe("registered guard hooks",()=>{
  it("does not affect unmanaged agents",async()=>{const f=await fixture();expect(await f.hooks.get("before_model_resolve")!({},{})).toBeUndefined();expect(f.reads).toEqual([]);});
  it("suppresses only the run chain, including nested-agent selection",async()=>{const f=await fixture();await f.write(pool);const before=structuredClone(f.cfg);expect(await f.hooks.get("before_model_resolve")!({},{agentId:"child"})).toEqual({fallbacksOverride:[]});expect(f.reads).toEqual([path.join(f.root,"agents/child/agent")]);expect(f.cfg).toEqual(before);expect(await f.hooks.get("before_agent_reply")!({},{trigger:"cron"})).toEqual({handled:false});});
  it.each(["pending","exhausted","malformed"])("fails closed for %s, including unknown triggers",async kind=>{const f=await fixture();if(kind==="pending")await f.write({...pool,phase:"pending"});else if(kind==="malformed")await f.write({version:42});else{await f.write(pool);for(const id of pool.members.map(m=>m.profileId))f.s.usageStats[id]={cooldownUntil:Date.now()+10000};}expect(await f.hooks.get("before_model_resolve")!({},{trigger:"unknown"})).toEqual({providerOverride:"golem-subscription-denied",modelOverride:"unavailable",fallbacksOverride:[]});expect(await f.hooks.get("before_agent_reply")!({},{})).toMatchObject({handled:true,reason:"subscription-only-admission"});expect(await f.hooks.get("before_agent_run")!({},{})).toMatchObject({outcome:"block",message:expect.stringContaining("SUBSCRIPTIONS_UNAVAILABLE")});});
+ it("preserves expired authorization as the cause across its own denied-provider hooks",async()=>{
+  const f=await fixture();await f.write({...pool,members:[pool.members[0]]});
+  delete f.s.profiles["openai:golem-b"];f.s.profiles["openai:golem-a"].expires=1;
+  const warning=vi.spyOn(console,"warn").mockImplementation(()=>{});
+  try {
+   expect(await f.hooks.get("before_model_resolve")!({},{})).toMatchObject({providerOverride:"golem-subscription-denied",fallbacksOverride:[]});
+   expect(await f.hooks.get("before_agent_reply")!({},{modelProviderId:"golem-subscription-denied",modelId:"unavailable"})).toMatchObject({handled:true});
+   expect(await f.hooks.get("before_agent_run")!({},{modelProviderId:"golem-subscription-denied",modelId:"unavailable"})).toMatchObject({outcome:"block"});
+   expect(warning).toHaveBeenCalledTimes(3);
+   for(const call of warning.mock.calls)expect(call[0]).toContain("OPENAI_SUBSCRIPTIONS_EXPIRED");
+  }finally{warning.mockRestore();}
+ });
  it("refuses disappearance after activation rather than treating it as unmanaged",async()=>{const f=await fixture();await f.write(pool);await f.hooks.get("before_model_resolve")!({},{});await fs.rm(poolGuardStatePath(process.env.OPENCLAW_CONFIG_PATH!));expect(await f.hooks.get("before_agent_reply")!({},{})).toMatchObject({handled:true});});
  it("denies SDK failures without logging raw error details",async()=>{
   const f=await fixture();await f.write(pool);

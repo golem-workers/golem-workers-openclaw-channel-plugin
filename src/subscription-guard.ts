@@ -22,7 +22,7 @@ type ModelAuth = {
 };
 type Runtime = { modelAuth?: ModelAuth; state?: { resolveStateDir(): string }; version?: string; agent?: {resolveAgentDir(config: Record<string, unknown>, agentId: string): string}; config?: {current(): Record<string, unknown>} };
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
-const denied = "OPENAI_SUBSCRIPTIONS_UNAVAILABLE: subscription-only inference refused; reconnect an enabled subscription or update this agent. No API-key/credits fallback was requested.";
+const denied = "OPENAI_SUBSCRIPTIONS_UNAVAILABLE: subscription-only inference refused; check authorization delivery and subscription availability. No API-key/credits fallback was requested.";
 
 export function poolGuardStatePath(configPath: string): string {
   return configPath === "/root/.openclaw/openclaw.json" ? "/var/lib/golem-workers/openai-subscription-pool.json" : configPath + ".golem-openai-pool.json";
@@ -63,7 +63,11 @@ export function assertPoolAdmission(pool: Pool, store: Store, config: Record<str
     const otherModel = s.cooldownModel && s.cooldownModel !== modelId && ["rate_limit", "timeout"].includes(String(s.cooldownReason));
     return c?.type === "oauth" && c.provider === "openai" && typeof c.access === "string" && c.access.length > 0 && typeof c.expires === "number" && c.expires > now && !(Number(s.blockedUntil) > now || Number(s.disabledUntil) > now || (!otherModel && Number(s.cooldownUntil) > now));
   });
-  if (!eligible) throw new Error("OPENAI_SUBSCRIPTIONS_EXHAUSTED");
+  if (!eligible) {
+    const credentials = [...enabled].map(id => store.profiles[id]).filter(c => c?.type === "oauth" && typeof c.access === "string" && c.access.length > 0);
+    if (credentials.length && credentials.every(c => typeof c.expires === "number" && c.expires <= now)) throw new Error("OPENAI_SUBSCRIPTIONS_EXPIRED");
+    throw new Error("OPENAI_SUBSCRIPTIONS_EXHAUSTED");
+  }
 }
 
 /** Opt-in only: never inherit the host's implicit cyber escalation target. */
@@ -137,7 +141,10 @@ export function registerSubscriptionGuard(api: OpenClawPluginApi): void {
           // Validate the original subscription route, credentials and pool even
           // for the explicitly authorized paid candidate. Never bypass admission
           // because a pool is pending, malformed or exhausted.
-          const admissionContext = isCyberCandidate ? { agentId: ctx.agentId } : ctx;
+          // A previous hook deliberately selected this plugin-owned denial route.
+          // Recheck the authored route; the sentinel is not a second routing fault.
+          const admissionContext = isCyberCandidate || ctx.modelProviderId === "golem-subscription-denied"
+            ? { agentId: ctx.agentId } : ctx;
           assertPoolAdmission(pool, store, cfg, admissionContext, Date.now(), legacyHost);
           return cyberTarget ? "cyber" as const : "allowed" as const;
         })(),
